@@ -1,4 +1,3 @@
-use std::f64::consts::PI;
 use crate::math::{Matrix3x3, Matrix4x4, Quaternion, Vector3};
 
 pub struct RigidBody {
@@ -6,34 +5,26 @@ pub struct RigidBody {
     pub orientation: Quaternion,
 
     pub linear_velocity: Vector3,
-    pub angular_velocity: Vector3,
+    pub rotational_velocity: Vector3,
 
     pub force: Vector3,
     pub torque: Vector3,
 
     pub linear_damping: f64,
-    pub angular_damping: f64,
+    pub rotational_damping: f64,
 
+    pub mass: f64,
     pub inverse_mass: f64,
+
     pub inverse_inertia_tensor_local: Matrix3x3,
     pub inverse_inertia_tensor_world: Matrix3x3,
 
     pub transform: Matrix4x4
 }
 
-pub trait ForceGenerator {
-    fn update(&mut self, body: &mut RigidBody, dt: f64);
-}
-
-pub struct Gravity {
-    pub gravity: Vector3
-}
-
 pub struct World {
-    bodies: Vec<RigidBody>,
-    force_generators: Vec<Box<dyn ForceGenerator>>,
-
-    pairs: Vec<(usize, usize)>
+    gravity: Vector3,
+    bodies: Vec<RigidBody>
 }
 
 impl RigidBody {
@@ -52,15 +43,17 @@ impl RigidBody {
             orientation: Quaternion::IDENTITY,
 
             linear_velocity: Vector3::ZERO,
-            angular_velocity: Vector3::ZERO,
+            rotational_velocity: Vector3::ZERO,
 
             force: Vector3::ZERO,
             torque: Vector3::ZERO,
 
-            linear_damping: 0.95,
-            angular_damping: 0.95,
+            linear_damping: 0.99,
+            rotational_damping: 0.25,
 
+            mass,
             inverse_mass: 1.0 / mass,
+
             inverse_inertia_tensor_world: inverse_inertia_tensor,
             inverse_inertia_tensor_local: inverse_inertia_tensor,
 
@@ -68,36 +61,31 @@ impl RigidBody {
         }
     }
 
-    pub fn integrate(&mut self, dt: f64) {
+    pub fn integrate(&mut self, delta_time: f64) {
         let linear_acceleration = self.inverse_mass * self.force;
-        let angular_acceleration = self.inverse_inertia_tensor_world * self.torque;
+        let rotational_acceleration = self.inverse_inertia_tensor_world * self.torque;
 
-        self.linear_velocity += linear_acceleration * dt;
-        self.angular_velocity += angular_acceleration * dt;
+        self.linear_velocity += linear_acceleration * delta_time;
+        self.rotational_velocity += rotational_acceleration * delta_time;
 
-        self.position += self.linear_velocity * dt;
+        self.position += self.linear_velocity * delta_time;
         self.orientation *= Quaternion {
             w: 1.0,
-            x: self.angular_velocity.x * dt,
-            y: self.angular_velocity.y * dt,
-            z: self.angular_velocity.z * dt
+            x: self.rotational_velocity.x * delta_time,
+            y: self.rotational_velocity.y * delta_time,
+            z: self.rotational_velocity.z * delta_time
         };
 
         self.orientation = self.orientation.normalized();
 
-        self.linear_velocity *= self.linear_damping.powf(dt);
-        self.angular_velocity *= self.angular_damping.powf(dt);
+        self.linear_velocity *= self.linear_damping.powf(delta_time);
+        self.rotational_velocity *= self.rotational_damping.powf(delta_time);
 
         self.force = Vector3::ZERO;
         self.torque = Vector3::ZERO;
 
         self.calculate_transform();
         self.calculate_inertia_tensor();
-    }
-
-    pub fn add_force(&mut self, force: Vector3, point: Vector3) {
-        self.force += force;
-        self.torque += (self.transform * point).cross(&force);
     }
 
     fn calculate_transform(&mut self) {
@@ -147,19 +135,11 @@ impl RigidBody {
     }
 }
 
-impl ForceGenerator for Gravity {
-    fn update(&mut self, body: &mut RigidBody, dt: f64) {
-        body.add_force(self.gravity * (1.0 / body.inverse_mass), Vector3::ZERO);
-    }
-}
-
 impl World {
     pub fn new() -> Self {
         Self {
-            bodies: vec![],
-            force_generators: vec![],
-
-            pairs: vec![]
+            gravity: Vector3 { x: 0.0, y: -9.80665, z: 0.0 },
+            bodies: vec![]
         }
     }
 
@@ -172,27 +152,10 @@ impl World {
         self.bodies.get_mut(index)
     }
 
-    pub fn add_force_generator(&mut self, force_generator: impl ForceGenerator + 'static) -> usize {
-        self.force_generators.push(Box::new(force_generator));
-
-        self.force_generators.len() - 1
-    }
-
-    pub fn set_pair(&mut self, body_index: usize, force_generator_index: usize) {
-        self.pairs.push((body_index, force_generator_index))
-    }
-
     pub fn update(&mut self, dt: f64) {
-        for (body_index, force_generator_index) in &self.pairs {
-            match (self.bodies.get_mut(*body_index), self.force_generators.get_mut(*force_generator_index)) {
-                (Some(body), Some(force_generator)) => {
-                    force_generator.update(body, dt);
-                },
-                _ => {}
-            }
-        }
-
         for body in &mut self.bodies {
+            body.force += self.gravity * body.mass;
+
             body.integrate(dt);
         }
     }
