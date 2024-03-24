@@ -1,5 +1,7 @@
 use crate::math::{Matrix3x3, Matrix4x4, Quaternion, Vector3};
 
+const ONE_SIXTH: f64 = 1.0 / 6.0;
+
 pub struct RigidBody {
     pub position: Vector3,
     pub orientation: Quaternion,
@@ -27,20 +29,21 @@ pub struct World {
     bodies: Vec<RigidBody>
 }
 
-impl RigidBody {
-    pub fn new(position: Vector3, mass: f64) -> Self {
-        let inverse_inertia = 3.0 / (2.0 * mass);
+pub struct Integrator;
 
+impl RigidBody {
+    pub fn new(position: Vector3, orientation: Quaternion, mass: f64) -> Self {
         // hardcoded into a 2m cube
+        let inverse_inertia = 3.0 / (2.0 * mass);
         let inverse_inertia_tensor = Matrix3x3 {
             m11: inverse_inertia, m12: 0.0, m13: 0.0,
             m21: 0.0, m22: inverse_inertia, m23: 0.0,
             m31: 0.0, m32: 0.0, m33: inverse_inertia
         };
 
-        Self {
+        let mut body =Self {
             position,
-            orientation: Quaternion::IDENTITY,
+            orientation,
 
             linear_velocity: Vector3::ZERO,
             rotational_velocity: Vector3::ZERO,
@@ -49,46 +52,54 @@ impl RigidBody {
             torque: Vector3::ZERO,
 
             linear_damping: 0.99,
-            rotational_damping: 0.25,
+            rotational_damping: 0.99,
 
             mass,
             inverse_mass: 1.0 / mass,
 
-            inverse_inertia_tensor_world: inverse_inertia_tensor,
             inverse_inertia_tensor_local: inverse_inertia_tensor,
+            inverse_inertia_tensor_world: Matrix3x3::IDENTITY,
 
             transform: Matrix4x4::IDENTITY
-        }
+        };
+
+        // pre-calculate derived data
+        body.calculate_transform();
+        body.calculate_inertia_tensor();
+
+        body
     }
 
-    pub fn integrate(&mut self, delta_time: f64) {
+    pub fn update(&mut self, delta_time: f64) {
         let linear_acceleration = self.inverse_mass * self.force;
         let rotational_acceleration = self.inverse_inertia_tensor_world * self.torque;
 
-        self.linear_velocity += linear_acceleration * delta_time;
-        self.rotational_velocity += rotational_acceleration * delta_time;
+        // integrate velocities
+        self.linear_velocity += Integrator::solve_vector(linear_acceleration, delta_time);
+        self.rotational_velocity += Integrator::solve_vector(rotational_acceleration, delta_time);
 
-        self.position += self.linear_velocity * delta_time;
-        self.orientation *= Quaternion {
-            w: 1.0,
-            x: self.rotational_velocity.x * delta_time,
-            y: self.rotational_velocity.y * delta_time,
-            z: self.rotational_velocity.z * delta_time
-        };
+        // integrate position and orientation
+        self.position += Integrator::solve_vector(self.linear_velocity, delta_time);
+        self.orientation *= Integrator::solve_quaternion(self.rotational_velocity, delta_time);
 
+        // normalize for rotation
         self.orientation = self.orientation.normalized();
 
+        // induce damping
         self.linear_velocity *= self.linear_damping.powf(delta_time);
         self.rotational_velocity *= self.rotational_damping.powf(delta_time);
 
+        // zero net forces
         self.force = Vector3::ZERO;
         self.torque = Vector3::ZERO;
 
+        // update derived data
         self.calculate_transform();
         self.calculate_inertia_tensor();
     }
 
     fn calculate_transform(&mut self) {
+        // yudiPOTA nga mga calculations
         let yy = self.orientation.y * self.orientation.y;
         let zz = self.orientation.z * self.orientation.z;
         let xy = self.orientation.x * self.orientation.y;
@@ -148,15 +159,37 @@ impl World {
 
         self.bodies.len() - 1
     }
-    pub fn get_body(&mut self, index: usize) -> Option<&mut RigidBody> {
+    pub fn get_body_mut(&mut self, index: usize) -> Option<&mut RigidBody> {
         self.bodies.get_mut(index)
+    }
+    pub fn get_body(&self, index: usize) -> Option<&RigidBody> {
+        self.bodies.get(index)
     }
 
     pub fn update(&mut self, dt: f64) {
         for body in &mut self.bodies {
-            body.force += self.gravity * body.mass;
+            // body.force += self.gravity * body.mass;
 
-            body.integrate(dt);
+            body.update(dt);
         }
+    }
+}
+
+impl Integrator {
+     pub fn solve_vector(dx: Vector3, dt: f64) -> Vector3 {
+        let half_dt = 0.5 * dt;
+        let sixth_dt = ONE_SIXTH * dt;
+
+        let k1 = dx;
+        let k2 = dx + k1 * half_dt;
+        let k3 = dx + k2 * half_dt;
+        let k4 = dx + k3 * dt;
+
+        (k1 + 2.0 * k2 + 2.0 * k3 + k4) * sixth_dt
+    }
+    pub fn solve_quaternion(dx: Vector3, dt: f64) -> Quaternion {
+        let y = Self::solve_vector(dx, dt);
+
+        Quaternion { w: 1.0, x: y.x, y: y.y, z: y.z }
     }
 }

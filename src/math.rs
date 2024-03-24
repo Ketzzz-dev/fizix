@@ -1,4 +1,5 @@
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use log::warn;
 
 // Structures
 #[derive(Debug, Copy, Clone)]
@@ -60,7 +61,9 @@ impl Vector3 {
         let magnitude = self.magnitude_sq();
 
         if magnitude == 0.0 {
-            panic!("Zero magnitude");
+            warn!("Zero magnitude!");
+
+            return *self;
         }
 
         *self * (1.0 / magnitude.sqrt())
@@ -166,7 +169,9 @@ impl Matrix3x3 {
         let determinant = self.determinant();
 
         if determinant == 0.0 {
-            panic!("Determinant is zero");
+            warn!("Zero determinant!");
+
+            return *self;
         }
 
         let determinant = 1.0 / determinant;
@@ -277,31 +282,49 @@ impl Matrix4x4 {
         let determinant = self.determinant();
 
         if determinant == 0.0 {
-            panic!("Determinant is zero");
+            warn!("Zero determinant!");
+
+            return *self;
         }
 
         let determinant = 1.0 / determinant;
 
         Matrix4x4 {
-            m11: (self.m22 * self.m33 * self.m44 + self.m23 * self.m34 * self.m42 + self.m24 * self.m32 * self.m43 - self.m24 * self.m33 * self.m42 - self.m23 * self.m32 * self.m44 - self.m22 * self.m34 * self.m43) * determinant,
-            m12: (-self.m12 * self.m33 * self.m44 - self.m13 * self.m34 * self.m42 - self.m14 * self.m32 * self.m43 + self.m14 * self.m33 * self.m42 + self.m13 * self.m32 * self.m44 + self.m12 * self.m34 * self.m43) * determinant,
-            m13: (self.m12 * self.m23 * self.m44 + self.m13 * self.m24 * self.m42 + self.m14 * self.m22 * self.m43 - self.m14 * self.m23 * self.m42 - self.m13 * self.m22 * self.m44 - self.m12 * self.m24 * self.m43) * determinant,
-            m14: (-self.m12 * self.m23 * self.m34 - self.m13 * self.m24 * self.m32 - self.m14 * self.m22 * self.m33 + self.m14 * self.m23 * self.m32 + self.m13 * self.m22 * self.m34 + self.m12 * self.m24 * self.m33) * determinant,
+            m11: (self.m22 * self.m33 * self.m44 + self.m23 * self.m34 * self.m42 + self.m24 * self.m32 * self.m43
+                - self.m24 * self.m33 * self.m42 - self.m23 * self.m32 * self.m44 - self.m22 * self.m34 * self.m43) * determinant,
+            m12: (-self.m12 * self.m33 * self.m44 - self.m13 * self.m34 * self.m42 - self.m14 * self.m32 * self.m43
+                + self.m14 * self.m33 * self.m42 + self.m13 * self.m32 * self.m44 + self.m12 * self.m34 * self.m43) * determinant,
+            m13: (self.m12 * self.m23 * self.m44 + self.m13 * self.m24 * self.m42 + self.m14 * self.m22 * self.m43
+                - self.m14 * self.m23 * self.m42 - self.m13 * self.m22 * self.m44 - self.m12 * self.m24 * self.m43) * determinant,
+            m14: (-self.m12 * self.m23 * self.m34 - self.m13 * self.m24 * self.m32 - self.m14 * self.m22 * self.m33
+                + self.m14 * self.m23 * self.m32 + self.m13 * self.m22 * self.m34 + self.m12 * self.m24 * self.m33) * determinant,
 
-            m21: (-self.m21 * self.m33 * self.m44 - self.m23 * self.m34 * self.m41 - self.m24 * self.m31 * self.m43 + self.m24 * self.m33 * self.m41 + self.m23 * self.m31 * self.m44 + self.m21 * self.m34 * self.m43) * determinant,
-            m22: (self.m11 * self.m33 * self.m44 + self.m13 * self.m34 * self.m41 + self.m14 * self.m31 * self.m43 - self.m14 * self.m33 * self.m41 - self.m13 * self.m31 * self.m44 - self.m11 * self.m34 * self.m43) * determinant,
-            m23: (-self.m11 * self.m23 * self.m44 - self.m13 * self.m24 * self.m41 - self.m14 * self.m21 * self.m43 + self.m14 * self.m23 * self.m41 + self.m13 * self.m21 * self.m44 + self.m11 * self.m24 * self.m43) * determinant,
-            m24: (self.m11 * self.m23 * self.m34 + self.m13 * self.m24 * self.m31 + self.m14 * self.m21 * self.m33 - self.m14 * self.m23 * self.m31 - self.m13 * self.m21 * self.m34 - self.m11 * self.m24 * self.m33) * determinant,
+            m21: (-self.m21 * self.m33 * self.m44 - self.m23 * self.m34 * self.m41 - self.m24 * self.m31 * self.m43
+                + self.m24 * self.m33 * self.m41 + self.m23 * self.m31 * self.m44 + self.m21 * self.m34 * self.m43) * determinant,
+            m22: (self.m11 * self.m33 * self.m44 + self.m13 * self.m34 * self.m41 + self.m14 * self.m31 * self.m43
+                - self.m14 * self.m33 * self.m41 - self.m13 * self.m31 * self.m44 - self.m11 * self.m34 * self.m43) * determinant,
+            m23: (-self.m11 * self.m23 * self.m44 - self.m13 * self.m24 * self.m41 - self.m14 * self.m21 * self.m43
+                + self.m14 * self.m23 * self.m41 + self.m13 * self.m21 * self.m44 + self.m11 * self.m24 * self.m43) * determinant,
+            m24: (self.m11 * self.m23 * self.m34 + self.m13 * self.m24 * self.m31 + self.m14 * self.m21 * self.m33
+                - self.m14 * self.m23 * self.m31 - self.m13 * self.m21 * self.m34 - self.m11 * self.m24 * self.m33) * determinant,
 
-            m31: (self.m21 * self.m32 * self.m44 + self.m22 * self.m34 * self.m41 + self.m24 * self.m31 * self.m42 - self.m24 * self.m32 * self.m41 - self.m22 * self.m31 * self.m44 - self.m21 * self.m34 * self.m42) * determinant,
-            m32: (-self.m11 * self.m32 * self.m44 - self.m12 * self.m34 * self.m41 - self.m14 * self.m31 * self.m42 + self.m14 * self.m32 * self.m41 + self.m12 * self.m31 * self.m44 + self.m11 * self.m34 * self.m42) * determinant,
-            m33: (self.m11 * self.m22 * self.m44 + self.m12 * self.m24 * self.m41 + self.m14 * self.m21 * self.m42 - self.m14 * self.m22 * self.m41 - self.m12 * self.m21 * self.m44 - self.m11 * self.m24 * self.m42) * determinant,
-            m34: (-self.m11 * self.m22 * self.m34 - self.m12 * self.m24 * self.m31 - self.m14 * self.m21 * self.m32 + self.m14 * self.m22 * self.m31 + self.m12 * self.m21 * self.m34 + self.m11 * self.m24 * self.m32) * determinant,
+            m31: (self.m21 * self.m32 * self.m44 + self.m22 * self.m34 * self.m41 + self.m24 * self.m31 * self.m42
+                - self.m24 * self.m32 * self.m41 - self.m22 * self.m31 * self.m44 - self.m21 * self.m34 * self.m42) * determinant,
+            m32: (-self.m11 * self.m32 * self.m44 - self.m12 * self.m34 * self.m41 - self.m14 * self.m31 * self.m42
+                + self.m14 * self.m32 * self.m41 + self.m12 * self.m31 * self.m44 + self.m11 * self.m34 * self.m42) * determinant,
+            m33: (self.m11 * self.m22 * self.m44 + self.m12 * self.m24 * self.m41 + self.m14 * self.m21 * self.m42
+                - self.m14 * self.m22 * self.m41 - self.m12 * self.m21 * self.m44 - self.m11 * self.m24 * self.m42) * determinant,
+            m34: (-self.m11 * self.m22 * self.m34 - self.m12 * self.m24 * self.m31 - self.m14 * self.m21 * self.m32
+                + self.m14 * self.m22 * self.m31 + self.m12 * self.m21 * self.m34 + self.m11 * self.m24 * self.m32) * determinant,
 
-            m41: (-self.m21 * self.m32 * self.m43 - self.m22 * self.m33 * self.m41 - self.m23 * self.m31 * self.m42 + self.m23 * self.m32 * self.m41 + self.m22 * self.m31 * self.m43 + self.m21 * self.m33 * self.m42) * determinant,
-            m42: (self.m11 * self.m32 * self.m43 + self.m12 * self.m33 * self.m41 + self.m13 * self.m31 * self.m42 - self.m13 * self.m32 * self.m41 - self.m12 * self.m31 * self.m43 - self.m11 * self.m33 * self.m42) * determinant,
-            m43: (-self.m11 * self.m22 * self.m43 - self.m12 * self.m23 * self.m41 - self.m13 * self.m21 * self.m42 + self.m13 * self.m22 * self.m41 + self.m12 * self.m21 * self.m43 + self.m11 * self.m23 * self.m42) * determinant,
-            m44: (self.m11 * self.m22 * self.m33 + self.m12 * self.m23 * self.m31 + self.m13 * self.m21 * self.m32 - self.m13 * self.m22 * self.m31 - self.m12 * self.m21 * self.m33 - self.m11 * self.m23 * self.m32) * determinant
+            m41: (-self.m21 * self.m32 * self.m43 - self.m22 * self.m33 * self.m41 - self.m23 * self.m31 * self.m42
+                + self.m23 * self.m32 * self.m41 + self.m22 * self.m31 * self.m43 + self.m21 * self.m33 * self.m42) * determinant,
+            m42: (self.m11 * self.m32 * self.m43 + self.m12 * self.m33 * self.m41 + self.m13 * self.m31 * self.m42
+                - self.m13 * self.m32 * self.m41 - self.m12 * self.m31 * self.m43 - self.m11 * self.m33 * self.m42) * determinant,
+            m43: (-self.m11 * self.m22 * self.m43 - self.m12 * self.m23 * self.m41 - self.m13 * self.m21 * self.m42
+                + self.m13 * self.m22 * self.m41 + self.m12 * self.m21 * self.m43 + self.m11 * self.m23 * self.m42) * determinant,
+            m44: (self.m11 * self.m22 * self.m33 + self.m12 * self.m23 * self.m31 + self.m13 * self.m21 * self.m32
+                - self.m13 * self.m22 * self.m31 - self.m12 * self.m21 * self.m33 - self.m11 * self.m23 * self.m32) * determinant
         }
     }
 
