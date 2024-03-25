@@ -26,7 +26,7 @@ fn main() {
         vec3(0.0, 0.0, 20.0),
         vec3(0.0, 0.0, 0.0),
         vec3(0.0, 1.0, 0.0),
-        degrees(75.0),
+        degrees(90.0),
         0.1,
         1000.0,
     );
@@ -37,7 +37,6 @@ fn main() {
         PhysicalMaterial::new_opaque(&context, &CpuMaterial {
             albedo: Srgba::GREEN,
 
-
             ..Default::default()
         })
     );
@@ -45,7 +44,6 @@ fn main() {
         Mesh::new(&context, &CpuMesh::sphere(16)),
         PhysicalMaterial::new_opaque(&context, &CpuMaterial {
             albedo: Srgba::BLUE,
-
 
             ..Default::default()
         })
@@ -90,13 +88,6 @@ fn main() {
 
         while accumulated_time > DELTA_TIME {
             controls.update(&mut camera, DELTA_TIME);
-
-            if let Some(body) = world.get_body_mut(body_index_a) {
-                body.position.x = (0.001 * frame_input.accumulated_time).sin() - 2.0;
-            }
-            if let Some(body) = world.get_body_mut(body_index_b) {
-                body.position.x = -(0.001 * frame_input.accumulated_time).sin() + 2.0;
-            }
 
             let body_a = world.get_body(body_index_a).unwrap();
             let body_b = world.get_body(body_index_b).unwrap();

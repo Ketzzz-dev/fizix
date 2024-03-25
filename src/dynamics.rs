@@ -71,18 +71,15 @@ impl RigidBody {
     }
 
     pub fn update(&mut self, delta_time: f64) {
+        // a = F/m
         let linear_acceleration = self.inverse_mass * self.force;
         let rotational_acceleration = self.inverse_inertia_tensor_world * self.torque;
 
-        // integrate velocities
-        self.linear_velocity += Integrator::solve_vector(linear_acceleration, delta_time);
-        self.rotational_velocity += Integrator::solve_vector(rotational_acceleration, delta_time);
+        // integrate position, orientation and velocities
+        Integrator::solve_position(&mut self.position, &mut self.linear_velocity, linear_acceleration, delta_time);
+        Integrator::solve_orientation(&mut self.orientation, &mut self.rotational_velocity, rotational_acceleration, delta_time);
 
-        // integrate position and orientation
-        self.position += Integrator::solve_vector(self.linear_velocity, delta_time);
-        self.orientation *= Integrator::solve_quaternion(self.rotational_velocity, delta_time);
-
-        // normalize for rotation
+        // normalize orientation for rotation matrix
         self.orientation = self.orientation.normalized();
 
         // induce damping
@@ -99,7 +96,7 @@ impl RigidBody {
     }
 
     fn calculate_transform(&mut self) {
-        // yudiPOTA nga mga calculations
+        // bunch of quaternion shit
         let yy = self.orientation.y * self.orientation.y;
         let zz = self.orientation.z * self.orientation.z;
         let xy = self.orientation.x * self.orientation.y;
@@ -168,7 +165,7 @@ impl World {
 
     pub fn update(&mut self, dt: f64) {
         for body in &mut self.bodies {
-            // body.force += self.gravity * body.mass;
+            body.force += self.gravity * body.mass;
 
             body.update(dt);
         }
@@ -176,20 +173,44 @@ impl World {
 }
 
 impl Integrator {
-     pub fn solve_vector(dx: Vector3, dt: f64) -> Vector3 {
-        let half_dt = 0.5 * dt;
-        let sixth_dt = ONE_SIXTH * dt;
+    // RK4 integration
+    fn solve(velocity: Vector3, acceleration: Vector3, delta_time: f64) -> (Vector3, Vector3) {
+        let half_delta_time = 0.5 * delta_time;
+        let sixth_delta_time = ONE_SIXTH * delta_time;
 
-        let k1 = dx;
-        let k2 = dx + k1 * half_dt;
-        let k3 = dx + k2 * half_dt;
-        let k4 = dx + k3 * dt;
+        let k1_velocity = acceleration;
+        let k1_position = velocity;
 
-        (k1 + 2.0 * k2 + 2.0 * k3 + k4) * sixth_dt
+        let k2_velocity = acceleration + half_delta_time * k1_velocity;
+        let k2_position = velocity + half_delta_time * k1_position;
+
+        let k3_velocity = acceleration + half_delta_time * k2_velocity;
+        let k3_position = velocity + half_delta_time * k2_position;
+
+        let k4_velocity = acceleration + delta_time * k3_velocity;
+        let k4_position = velocity + delta_time * k3_position;
+
+        (
+            sixth_delta_time * (k1_velocity + 2.0 * k2_velocity + 2.0 * k3_velocity + k4_velocity),
+            sixth_delta_time * (k1_position + 2.0 * k2_position + 2.0 * k3_position + k4_position)
+        )
     }
-    pub fn solve_quaternion(dx: Vector3, dt: f64) -> Quaternion {
-        let y = Self::solve_vector(dx, dt);
 
-        Quaternion { w: 1.0, x: y.x, y: y.y, z: y.z }
+    pub fn solve_position(position: &mut Vector3, velocity: &mut Vector3, acceleration: Vector3, delta_time: f64) {
+        let (delta_velocity, delta_position) = Self::solve(*velocity, acceleration, delta_time);
+
+        *velocity += delta_velocity;
+        *position += delta_position;
+    }
+    pub fn solve_orientation(orientation: &mut Quaternion, velocity: &mut Vector3, acceleration: Vector3, delta_time: f64) {
+        let (delta_velocity, delta_orientation) = Self::solve(*velocity, acceleration, delta_time);
+
+        *velocity += delta_velocity;
+        *orientation *= Quaternion {
+            w: 1.0,
+            x: delta_orientation.x,
+            y: delta_orientation.y,
+            z: delta_orientation.z
+        };
     }
 }

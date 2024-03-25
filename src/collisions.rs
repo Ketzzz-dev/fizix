@@ -1,5 +1,5 @@
 use crate::dynamics::RigidBody;
-use crate::math::{Matrix4x4, Vector3};
+use crate::math::{Vector3};
 
 pub struct Contact {
     pub point: Vector3,
@@ -172,31 +172,6 @@ impl CollisionDetector {
         primitive_b: &Box,
         body_b: &RigidBody
     ) -> Option<CollisionData> {
-        None
-    }
-
-    fn transform_to_axis(primitve: &Box, transform: &Matrix4x4, axis: &Vector3) -> f64 {
-        let c1 = Vector3 { x: transform.m11, y: transform.m21, z: transform.m31 };
-        let c2 = Vector3 { x: transform.m12, y: transform.m22, z: transform.m32 };
-        let c3 = Vector3 { x: transform.m13, y: transform.m23, z: transform.m33 };
-
-        primitve.half_size.x * axis.dot(&c1).abs() +
-            primitve.half_size.y * axis.dot(&c2).abs() +
-            primitve.half_size.z * axis.dot(&c3).abs()
-    }
-
-    fn overlap_on_axis(
-        primitive_a: &Box,
-        body_a: &RigidBody,
-        primitive_b: &Box,
-        body_b: &RigidBody,
-        axis: &Vector3
-    ) -> bool {
-        let projection_a = Self::transform_to_axis(primitive_a, &body_a.transform, axis);
-        let projection_b = Self::transform_to_axis(primitive_b, &body_b.transform, axis);
-
-        let distance = (body_b.position - body_a.position).dot(axis).abs();
-
-        distance < projection_a + projection_b
+        todo!("Implement box vs box collision");
     }
 }
