@@ -1,8 +1,9 @@
-use three_d::{WindowSettings, Window, Srgba, PhysicalMaterial, Mesh, Gm, FrameOutput, DirectionalLight, CpuMesh, CpuMaterial, ClearState, Camera, vec3, degrees, AmbientLight, Matrix4, Event, SquareMatrix};
-use crate::collisions::{CollisionDetector, Box, Sphere};
+use three_d::{WindowSettings, Window, Srgba, PhysicalMaterial, Mesh, Gm, FrameOutput, DirectionalLight, CpuMesh, CpuMaterial, ClearState, Camera, vec3, degrees, AmbientLight, Matrix4};
+use crate::collisions::{CollisionDetector, Plane, Sphere};
+
 use crate::dynamics::{RigidBody, World};
 use crate::free_cam_control::FreeCamControl;
-use crate::math::{Vector3, Quaternion};
+use crate::math::{Vector3, Quaternion, Matrix4x4};
 
 pub mod dynamics;
 pub mod math;
@@ -32,15 +33,15 @@ fn main() {
     );
     let mut controls = FreeCamControl::new(5.0, 2.5, 10.0);
 
-    let mut cube = Gm::new(
-        Mesh::new(&context, &CpuMesh::cube()),
+    let mut sphere_a = Gm::new(
+        Mesh::new(&context, &CpuMesh::sphere(16)),
         PhysicalMaterial::new_opaque(&context, &CpuMaterial {
             albedo: Srgba::GREEN,
 
             ..Default::default()
         })
     );
-    let mut sphere = Gm::new(
+    let mut sphere_b = Gm::new(
         Mesh::new(&context, &CpuMesh::sphere(16)),
         PhysicalMaterial::new_opaque(&context, &CpuMaterial {
             albedo: Srgba::BLUE,
@@ -51,14 +52,14 @@ fn main() {
     let mut plane = Gm::new(
         Mesh::new(&context, &CpuMesh::square()),
         PhysicalMaterial::new_opaque(&context, &CpuMaterial {
-            albedo: Srgba::WHITE,
+            albedo: Srgba::new_opaque(120, 100, 120),
 
             ..Default::default()
         })
     );
 
     plane.set_transformation(
-        Matrix4::from_translation(vec3(0.0, -5.0, 0.0)) *
+        Matrix4::from_translation(vec3(0.0, -10.0, 0.0)) *
             Matrix4::from_angle_x(degrees(90.0)) *
             Matrix4::from_scale(25.0)
     );
@@ -67,11 +68,13 @@ fn main() {
     let ambient = AmbientLight::new(&context, 0.05, Srgba::WHITE);
 
     let mut world = World::new();
-    let mut body_a = RigidBody::new(Vector3 { x: -1.0, y: 0.0, z: 0.0 }, Quaternion::IDENTITY, 10.0);
-    let mut body_b = RigidBody::new(Vector3 { x: 1.0, y: 0.0, z: 0.0 }, Quaternion::IDENTITY, 10.0);
+    
+    let body_a = RigidBody::new(-Vector3::X_AXIS * 1.5, Quaternion::IDENTITY, 10.0);
+    let body_b = RigidBody::new(Vector3::X_AXIS * 1.5, Quaternion { w: 1.0, x: 1.0, y: 1.0, z: 0.0 }, 10.0);
 
-    body_a.rotational_velocity = Vector3 { x: -1.0, y: -0.5, z: 0.25 } * 0.25;
-    body_b.rotational_velocity = Vector3 { x: -0.25, y: 0.5, z: 1.0 } * 0.25;
+    let primitive_a = Sphere { radius: 1.0 };
+    let primitive_b = Sphere { radius: 1.0 };
+    let primitive_c = Plane { normal: Vector3::Y_AXIS, offset: -10.0 };
 
     let body_index_a = world.add_body(body_a);
     let body_index_b = world.add_body(body_b);
@@ -82,25 +85,50 @@ fn main() {
         camera.set_viewport(frame_input.viewport);
         controls.handle_events(&mut camera, &mut frame_input.events);
 
-        handle_events(&mut frame_input.events);
-
         accumulated_time += 0.001 * frame_input.elapsed_time;
 
         while accumulated_time > DELTA_TIME {
             controls.update(&mut camera, DELTA_TIME);
 
-            let body_a = world.get_body(body_index_a).unwrap();
-            let body_b = world.get_body(body_index_b).unwrap();
+            if let Some(body) = world.get_body_mut(body_index_a) {
+                if let Some(collision_data) = CollisionDetector::sphere_plane(&primitive_a, &body, &primitive_c, &body) {
+                    for contact in &collision_data.contacts {
+                        let normal_velocity = body.linear_velocity.dot(&contact.normal);
 
-            let primitive_a = Box { half_size: Vector3 { x: 2.0, y: 1.0, z: 3.0 } };
-            let primitive_b = Sphere { radius: 1.0 };
+                        if normal_velocity > 0.0 { break; }
 
-            if let Some(_) = CollisionDetector::box_sphere(&primitive_a, body_a, &primitive_b, body_b) {
-                cube.material.albedo = Srgba::RED;
-                sphere.material.albedo = Srgba::RED;
-            } else {
-                cube.material.albedo = Srgba::GREEN;
-                sphere.material.albedo = Srgba::BLUE;
+                        let restitution = 0.707;
+                        let impulse = -(1.0 + restitution) * normal_velocity;
+                        let impulse_vector = impulse * contact.normal;
+
+                        body.linear_velocity += impulse_vector;
+                    }
+                    for contact in &collision_data.contacts {
+                        let move_per_mass = contact.normal * contact.penetration;
+
+                        body.position += move_per_mass;
+                    }
+                }
+            }
+            if let Some(body) = world.get_body_mut(body_index_b) {
+                if let Some(collision_data) = CollisionDetector::sphere_plane(&primitive_b, &body, &primitive_c, &body) {
+                    for contact in &collision_data.contacts {
+                        let normal_velocity = body.linear_velocity.dot(&contact.normal);
+
+                        if normal_velocity > 0.0 { break; }
+
+                        let restitution = 0.292;
+                        let impulse = -(1.0 + restitution) * normal_velocity;
+                        let impulse_vector = impulse * contact.normal;
+
+                        body.linear_velocity += impulse_vector;
+                    }
+                    for contact in &collision_data.contacts {
+                        let move_per_mass = contact.normal * contact.penetration;
+
+                        body.position += move_per_mass;
+                    }
+                }
             }
 
             world.update(DELTA_TIME);
@@ -108,39 +136,28 @@ fn main() {
             accumulated_time -= DELTA_TIME;
         }
 
-        let body_a = world.get_body(body_index_a).unwrap();
-        let body_b = world.get_body(body_index_b).unwrap();
+        if let Some(body_a) = world.get_body(body_index_a) {
+            sphere_a.set_transformation(to_cg_matrix(&body_a.transform));
+        }
+        if let Some(body_b) = world.get_body(body_index_b) {
+            sphere_b.set_transformation(to_cg_matrix(&body_b.transform));
+        }
 
-        let transform_a = Matrix4::new(
-            body_a.transform.m11 as f32, body_a.transform.m21 as f32, body_a.transform.m31 as f32, body_a.transform.m41 as f32,
-            body_a.transform.m12 as f32, body_a.transform.m22 as f32, body_a.transform.m32 as f32, body_a.transform.m42 as f32,
-            body_a.transform.m13 as f32, body_a.transform.m23 as f32, body_a.transform.m33 as f32, body_a.transform.m43 as f32,
-            body_a.transform.m14 as f32, body_a.transform.m24 as f32, body_a.transform.m34 as f32, body_a.transform.m44 as f32
-        );
-        let transform_b = Matrix4::new(
-            body_b.transform.m11 as f32, body_b.transform.m21 as f32, body_b.transform.m31 as f32, body_b.transform.m41 as f32,
-            body_b.transform.m12 as f32, body_b.transform.m22 as f32, body_b.transform.m32 as f32, body_b.transform.m42 as f32,
-            body_b.transform.m13 as f32, body_b.transform.m23 as f32, body_b.transform.m33 as f32, body_b.transform.m43 as f32,
-            body_b.transform.m14 as f32, body_b.transform.m24 as f32, body_b.transform.m34 as f32, body_b.transform.m44 as f32
-        );
-
-        cube.set_transformation(transform_a * Matrix4::from_nonuniform_scale(2.0, 1.0, 3.0));
-        sphere.set_transformation(transform_b);
-
-        sun.generate_shadow_map(1024, cube.into_iter().chain(&sphere));
+        sun.generate_shadow_map(1024, sphere_a.into_iter().chain(&sphere_b));
 
         frame_input.screen()
             .clear(ClearState::color_and_depth(0.043, 0.051, 0.067, 1.0, 1.0))
-            .render(&camera, cube.into_iter().chain(&sphere), &[&sun, &ambient]);
+            .render(&camera, sphere_a.into_iter().chain(&sphere_b).chain(&plane), &[&sun, &ambient]);
 
         FrameOutput::default()
     });
 }
 
-fn handle_events(events: &mut [Event]) {
-    for event in events {
-        match *event {
-            _ => {}
-        }
-    }
+fn to_cg_matrix(transform: &Matrix4x4) -> Matrix4<f32> {
+    Matrix4::new(
+        transform.m11 as f32, transform.m21 as f32, transform.m31 as f32, transform.m41 as f32,
+        transform.m12 as f32, transform.m22 as f32, transform.m32 as f32, transform.m42 as f32,
+        transform.m13 as f32, transform.m23 as f32, transform.m33 as f32, transform.m43 as f32,
+        transform.m14 as f32, transform.m24 as f32, transform.m34 as f32, transform.m44 as f32
+    )
 }

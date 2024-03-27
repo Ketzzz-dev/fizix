@@ -20,158 +20,179 @@ pub struct Plane {
     pub offset: f64,
 }
 
-pub struct Box {
+pub struct Cube {
     pub half_size: Vector3
 }
 
 pub struct CollisionDetector;
+pub struct CollisionResolver;
 
 impl CollisionDetector {
     pub fn sphere_sphere(
-        primitive_a: &Sphere,
+        sphere_a: &Sphere,
         body_a: &RigidBody,
-        primitive_b: &Sphere,
+        sphere_b: &Sphere,
         body_b: &RigidBody
     ) -> Option<CollisionData> {
-        let midline = body_a.position - body_b.position;
-        let distance_sq = midline.magnitude_sq();
-        let radii = primitive_a.radius + primitive_b.radius;
+        let delta = body_a.position - body_b.position;
+        let distance_sq = delta.magnitude_sq();
+        let radius_sum = sphere_a.radius + sphere_b.radius;
 
-        if distance_sq <= 0.0 || distance_sq >= radii * radii {
-            return None;
-        }
+        if distance_sq > radius_sum * radius_sum { return None }
 
         let distance = distance_sq.sqrt();
+        let normal = delta * (1.0 / distance);
 
         let contact = Contact {
-            point: body_a.position + midline * 0.5,
-            normal: midline * (1.0 / distance),
-
-            penetration: radii - distance
+            point: body_a.position + normal * sphere_a.radius,
+            normal,
+            penetration: radius_sum - distance
         };
 
         Some(CollisionData { contacts: vec![contact] })
     }
 
     pub fn sphere_plane(
-        primitive_a: &Sphere,
+        sphere_a: &Sphere,
         body_a: &RigidBody,
-        primitive_b: &Plane,
-        body_b: &RigidBody
+        plane_b: &Plane,
+        _body_b: &RigidBody
     ) -> Option<CollisionData> {
-        let center_distance = primitive_b.normal.dot(&body_a.position) - primitive_b.offset;
+        let distance_to_plane = body_a.position.dot(&plane_b.normal) - plane_b.offset;
 
-        if center_distance * center_distance > primitive_a.radius * primitive_a.radius {
-            return None;
-        }
-
-        let (normal, penetration) = if center_distance < 0.0 {
-            (-primitive_b.normal, primitive_a.radius + center_distance)
-        } else {
-            (primitive_b.normal, primitive_a.radius - center_distance)
-        };
+        if distance_to_plane > sphere_a.radius { return None }
 
         let contact = Contact {
-            point: body_a.position - primitive_b.normal * center_distance,
-            normal,
-            penetration
+            point: body_a.position - plane_b.normal * (distance_to_plane - sphere_a.radius),
+            normal: plane_b.normal,
+            penetration: sphere_a.radius - distance_to_plane
         };
 
         Some(CollisionData { contacts: vec![contact] })
     }
 
-    pub fn box_plane(
-        primitive_a: &Box,
+    pub fn cube_plane(
+        cube_a: &Cube,
         body_a: &RigidBody,
-        primitive_b: &Plane,
-        body_b: &RigidBody
+        plane_b: &Plane,
+        _body_b: &RigidBody
     ) -> Option<CollisionData> {
-        let vertices = [
-            Vector3 { x: -primitive_a.half_size.x, y: -primitive_a.half_size.y, z: -primitive_a.half_size.z },
-            Vector3 { x: -primitive_a.half_size.x, y: -primitive_a.half_size.y, z: primitive_a.half_size.z },
-            Vector3 { x: -primitive_a.half_size.x, y: primitive_a.half_size.y, z: -primitive_a.half_size.z },
-            Vector3 { x: -primitive_a.half_size.x, y: primitive_a.half_size.y, z: primitive_a.half_size.z },
-            Vector3 { x: primitive_a.half_size.x, y: -primitive_a.half_size.y, z: -primitive_a.half_size.z },
-            Vector3 { x: primitive_a.half_size.x, y: -primitive_a.half_size.y, z: primitive_a.half_size.z },
-            Vector3 { x: primitive_a.half_size.x, y: primitive_a.half_size.y, z: -primitive_a.half_size.z },
-            Vector3 { x: primitive_a.half_size.x, y: primitive_a.half_size.y, z: primitive_a.half_size.z }
-        ];
+        let mut contacts = vec![];
+        let mut penetration = f64::MAX;
 
-        for vertex in vertices {
-            let vertex = body_a.transform * vertex;
-            let distance = vertex.dot(&primitive_b.normal);
+        for x in &[-1.0, 1.0] {
+            for y in &[-1.0, 1.0] {
+                for z in &[-1.0, 1.0] {
+                    let offset = Vector3 {
+                        x: x * cube_a.half_size.x,
+                        y: y * cube_a.half_size.y,
+                        z: z * cube_a.half_size.z
+                    };
 
-            if distance <= primitive_b.offset {
-                let contact = Contact {
-                    point: primitive_b.normal * (distance - primitive_b.offset) + vertex,
-                    normal: primitive_b.normal,
-                    penetration: primitive_b.offset - distance
-                };
+                    let world_point = body_a.transform * offset;
+                    let distance_to_plane = world_point.dot(&plane_b.normal) - plane_b.offset;
 
-                return Some(CollisionData {
-                    contacts: vec![contact]
-                })
+                    if distance_to_plane > 0.0 { return None }
+                    if distance_to_plane > penetration { continue }
+
+                    let contact = Contact {
+                        point: world_point - plane_b.normal * distance_to_plane,
+                        normal: plane_b.normal,
+                        penetration: -distance_to_plane
+                    };
+
+                    penetration = distance_to_plane;
+                    contacts.push(contact);
+                }
             }
         }
 
-        None
+        Some(CollisionData { contacts })
     }
 
-    pub fn box_sphere(
-        primitive_a: &Box,
+    pub fn cube_sphere(
+        cube_a: &Cube,
         body_a: &RigidBody,
-        primitive_b: &Sphere,
+        sphere_b: &Sphere,
         body_b: &RigidBody
     ) -> Option<CollisionData> {
-        let relative_position = body_a.transform.inverse() * body_b.position;
+        let mut contacts = vec![];
+        let mut penetration = f64::MAX;
 
-        if
-            relative_position.x.abs() - primitive_b.radius > primitive_a.half_size.x ||
-            relative_position.y.abs() - primitive_b.radius > primitive_a.half_size.y ||
-            relative_position.z.abs() - primitive_b.radius > primitive_a.half_size.z
-        { return None }
+        for x in &[-1.0, 1.0] {
+            for y in &[-1.0, 1.0] {
+                for z in &[-1.0, 1.0] {
+                    let offset = Vector3 {
+                        x: x * cube_a.half_size.x,
+                        y: y * cube_a.half_size.y,
+                        z: z * cube_a.half_size.z
+                    };
 
-        let mut closest_point = Vector3::ZERO;
-        let mut distance = relative_position.x;
+                    let world_point = body_a.transform * offset;
+                    let delta = world_point - body_b.position;
+                    let distance_sq = delta.magnitude_sq();
+                    let radius_sum = sphere_b.radius;
 
-        if distance > primitive_a.half_size.x { distance = primitive_a.half_size.x }
-        if distance < -primitive_a.half_size.x { distance = -primitive_a.half_size.x }
+                    if distance_sq > radius_sum * radius_sum { return None }
 
-        closest_point.x = distance;
-        distance = relative_position.y;
+                    let distance = distance_sq.sqrt();
+                    let normal = delta * (1.0 / distance);
 
-        if distance > primitive_a.half_size.y { distance = primitive_a.half_size.y }
-        if distance < -primitive_a.half_size.y { distance = -primitive_a.half_size.y }
+                    let contact = Contact {
+                        point: body_b.position + normal * sphere_b.radius,
+                        normal,
+                        penetration: radius_sum - distance
+                    };
 
-        closest_point.y = distance;
-        distance = relative_position.z;
+                    if contact.penetration < penetration {
+                        penetration = contact.penetration;
+                        contacts.clear();
+                    }
 
-        if distance > primitive_a.half_size.z { distance = primitive_a.half_size.z }
-        if distance < -primitive_a.half_size.z { distance = -primitive_a.half_size.z }
+                    contacts.push(contact);
+                }
+            }
+        }
 
-        closest_point.z = distance;
+        Some(CollisionData { contacts })
+    }
+}
 
-        let distance = (closest_point - relative_position).magnitude_sq();
+impl CollisionResolver {
+    pub fn resolve_collision(
+        body_a: &mut RigidBody,
+        body_b: &mut RigidBody,
+        data: &CollisionData
+    ) {
+        let total_inverse_mass = body_a.inverse_mass + body_b.inverse_mass;
+        let relative_velocity = body_a.linear_velocity - body_b.linear_velocity;
 
-        if distance > primitive_b.radius * primitive_b.radius { return None }
+        for contact in &data.contacts {
+            let normal_velocity = relative_velocity.dot(&contact.normal);
 
-        let closest_point = body_a.transform * closest_point;
+            if normal_velocity > 0.0 { return }
 
-        let contact = Contact {
-            point: closest_point,
-            normal: (body_b.position - closest_point).normalized(),
-            penetration: primitive_b.radius - distance.sqrt()
-        };
+            let restitution = 0.5;
+            let impulse = -(1.0 + restitution) * normal_velocity / total_inverse_mass;
+            let impulse_vector = impulse * contact.normal;
 
-        Some(CollisionData { contacts: vec![contact] })
+            body_a.linear_velocity += impulse_vector * body_a.inverse_mass;
+            body_b.linear_velocity -= impulse_vector * body_b.inverse_mass;
+        }
     }
 
-    pub fn box_box(
-        primitive_a: &Box,
-        body_a: &RigidBody,
-        primitive_b: &Box,
-        body_b: &RigidBody
-    ) -> Option<CollisionData> {
-        todo!("Implement box vs box collision");
+    pub fn resolve_penetration(
+        body_a: &mut RigidBody,
+        body_b: &mut RigidBody,
+        data: &CollisionData
+    ) {
+        let total_inverse_mass = body_a.inverse_mass + body_b.inverse_mass;
+
+        for contact in &data.contacts {
+            let move_per_mass = contact.normal * (contact.penetration / total_inverse_mass);
+
+            body_a.position += move_per_mass * body_a.inverse_mass;
+            body_b.position -= move_per_mass * body_b.inverse_mass;
+        }
     }
 }

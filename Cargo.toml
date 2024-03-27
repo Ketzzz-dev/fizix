@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-three-d = "0.16.3"
+three-d = "0.17.0"
 log = "0.4.20"
