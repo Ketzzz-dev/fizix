@@ -155,6 +155,11 @@ impl Matrix3x3 {
         m21: 0.0, m22: 1.0, m23: 0.0,
         m31: 0.0, m32: 0.0, m33: 1.0
     };
+    pub const ZERO: Matrix3x3 = Matrix3x3 {
+        m11: 0.0, m12: 0.0, m13: 0.0,
+        m21: 0.0, m22: 0.0, m23: 0.0,
+        m31: 0.0, m32: 0.0, m33: 0.0
+    };
 
     pub fn determinant(&self) -> f64 {
         self.m11 * self.m22 * self.m33
@@ -266,6 +271,12 @@ impl Matrix4x4 {
         m31: 0.0, m32: 0.0, m33: 1.0, m34: 0.0,
         m41: 0.0, m42: 0.0, m43: 0.0, m44: 1.0
     };
+    pub const ZERO: Matrix4x4 = Matrix4x4 {
+        m11: 0.0, m12: 0.0, m13: 0.0, m14: 0.0,
+        m21: 0.0, m22: 0.0, m23: 0.0, m24: 0.0,
+        m31: 0.0, m32: 0.0, m33: 0.0, m34: 0.0,
+        m41: 0.0, m42: 0.0, m43: 0.0, m44: 0.0
+    };
 
     pub fn determinant(&self) -> f64 {
         self.m11 * self.m22 * self.m33 * self.m44 + self.m11 * self.m23 * self.m34 * self.m42 + self.m11 * self.m24 * self.m32 * self.m43
@@ -328,12 +339,19 @@ impl Matrix4x4 {
         }
     }
 
-    pub fn transpose(&self) -> Matrix4x4 {
-        Matrix4x4 {
-            m11: self.m11, m12: self.m21, m13: self.m31, m14: self.m41,
-            m21: self.m12, m22: self.m22, m23: self.m32, m24: self.m42,
-            m31: self.m13, m32: self.m23, m33: self.m33, m34: self.m43,
-            m41: self.m14, m42: self.m24, m43: self.m34, m44: self.m44
+    pub fn translation(&self) -> Vector3 {
+        Vector3 {
+            x: self.m14,
+            y: self.m24,
+            z: self.m34
+        }
+    }
+
+    pub fn rotation(&self) -> Matrix3x3 {
+        Matrix3x3 {
+            m11: self.m11, m12: self.m12, m13: self.m13,
+            m21: self.m21, m22: self.m22, m23: self.m23,
+            m31: self.m31, m32: self.m32, m33: self.m33
         }
     }
 }

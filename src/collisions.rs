@@ -1,5 +1,6 @@
+use log::warn;
 use crate::dynamics::RigidBody;
-use crate::math::{Vector3};
+use crate::math::{Matrix3x3, Matrix4x4, Vector3};
 
 pub struct Contact {
     pub point: Vector3,
@@ -17,182 +18,141 @@ pub struct Sphere {
 }
 pub struct Plane {
     pub normal: Vector3,
-    pub offset: f64,
+    pub offset: f64
 }
 
-pub struct Cube {
-    pub half_size: Vector3
+pub trait Collider {
+    fn calculate_inverse_inertia_tensor(&self, mass: f64) -> Matrix3x3;
+    fn collides(&self, this_transform: &Matrix4x4, other: &impl Collider, other_transform: &Matrix4x4) -> Option<CollisionData>;
+
+    fn collides_with_sphere(&self, this_transform: &Matrix4x4, sphere: &Sphere, other_transform: &Matrix4x4) -> Option<CollisionData>;
+    fn collides_with_plane(&self, this_transform: &Matrix4x4, plane: &Plane) -> Option<CollisionData>;
 }
 
-pub struct CollisionDetector;
-pub struct CollisionResolver;
+impl Collider for Sphere {
+    fn calculate_inverse_inertia_tensor(&self, mass: f64) -> Matrix3x3 {
+        let inverse_inertia = 5.0 / (2.0 * mass * self.radius * self.radius);
 
-impl CollisionDetector {
-    pub fn sphere_sphere(
-        sphere_a: &Sphere,
-        body_a: &RigidBody,
-        sphere_b: &Sphere,
-        body_b: &RigidBody
-    ) -> Option<CollisionData> {
-        let delta = body_a.position - body_b.position;
-        let distance_sq = delta.magnitude_sq();
-        let radius_sum = sphere_a.radius + sphere_b.radius;
-
-        if distance_sq > radius_sum * radius_sum { return None }
-
-        let distance = distance_sq.sqrt();
-        let normal = delta * (1.0 / distance);
-
-        let contact = Contact {
-            point: body_a.position + normal * sphere_a.radius,
-            normal,
-            penetration: radius_sum - distance
-        };
-
-        Some(CollisionData { contacts: vec![contact] })
-    }
-
-    pub fn sphere_plane(
-        sphere_a: &Sphere,
-        body_a: &RigidBody,
-        plane_b: &Plane,
-        _body_b: &RigidBody
-    ) -> Option<CollisionData> {
-        let distance_to_plane = body_a.position.dot(&plane_b.normal) - plane_b.offset;
-
-        if distance_to_plane > sphere_a.radius { return None }
-
-        let contact = Contact {
-            point: body_a.position - plane_b.normal * (distance_to_plane - sphere_a.radius),
-            normal: plane_b.normal,
-            penetration: sphere_a.radius - distance_to_plane
-        };
-
-        Some(CollisionData { contacts: vec![contact] })
-    }
-
-    pub fn cube_plane(
-        cube_a: &Cube,
-        body_a: &RigidBody,
-        plane_b: &Plane,
-        _body_b: &RigidBody
-    ) -> Option<CollisionData> {
-        let mut contacts = vec![];
-        let mut penetration = f64::MAX;
-
-        for x in &[-1.0, 1.0] {
-            for y in &[-1.0, 1.0] {
-                for z in &[-1.0, 1.0] {
-                    let offset = Vector3 {
-                        x: x * cube_a.half_size.x,
-                        y: y * cube_a.half_size.y,
-                        z: z * cube_a.half_size.z
-                    };
-
-                    let world_point = body_a.transform * offset;
-                    let distance_to_plane = world_point.dot(&plane_b.normal) - plane_b.offset;
-
-                    if distance_to_plane > 0.0 { return None }
-                    if distance_to_plane > penetration { continue }
-
-                    let contact = Contact {
-                        point: world_point - plane_b.normal * distance_to_plane,
-                        normal: plane_b.normal,
-                        penetration: -distance_to_plane
-                    };
-
-                    penetration = distance_to_plane;
-                    contacts.push(contact);
-                }
-            }
+        Matrix3x3 {
+            m11: inverse_inertia, m12: 0.0, m13: 0.0,
+            m21: 0.0, m22: inverse_inertia, m23: 0.0,
+            m31: 0.0, m32: 0.0, m33: inverse_inertia
         }
-
-        Some(CollisionData { contacts })
+    }
+    fn collides(&self, this_transform: &Matrix4x4, other: &impl Collider, other_transform: &Matrix4x4) -> Option<CollisionData> {
+        other.collides_with_sphere(other_transform, self, this_transform)
     }
 
-    pub fn cube_sphere(
-        cube_a: &Cube,
-        body_a: &RigidBody,
-        sphere_b: &Sphere,
-        body_b: &RigidBody
-    ) -> Option<CollisionData> {
-        let mut contacts = vec![];
-        let mut penetration = f64::MAX;
+    fn collides_with_sphere(&self, this_transform: &Matrix4x4, sphere: &Sphere, other_transform: &Matrix4x4) -> Option<CollisionData> {
+        sphere_vs_sphere(self, this_transform, sphere, other_transform)
+    }
 
-        for x in &[-1.0, 1.0] {
-            for y in &[-1.0, 1.0] {
-                for z in &[-1.0, 1.0] {
-                    let offset = Vector3 {
-                        x: x * cube_a.half_size.x,
-                        y: y * cube_a.half_size.y,
-                        z: z * cube_a.half_size.z
-                    };
-
-                    let world_point = body_a.transform * offset;
-                    let delta = world_point - body_b.position;
-                    let distance_sq = delta.magnitude_sq();
-                    let radius_sum = sphere_b.radius;
-
-                    if distance_sq > radius_sum * radius_sum { return None }
-
-                    let distance = distance_sq.sqrt();
-                    let normal = delta * (1.0 / distance);
-
-                    let contact = Contact {
-                        point: body_b.position + normal * sphere_b.radius,
-                        normal,
-                        penetration: radius_sum - distance
-                    };
-
-                    if contact.penetration < penetration {
-                        penetration = contact.penetration;
-                        contacts.clear();
-                    }
-
-                    contacts.push(contact);
-                }
-            }
-        }
-
-        Some(CollisionData { contacts })
+    fn collides_with_plane(&self, this_transform: &Matrix4x4, plane: &Plane) -> Option<CollisionData> {
+        sphere_vs_plane(self, this_transform, plane)
     }
 }
 
-impl CollisionResolver {
-    pub fn resolve_collision(
-        body_a: &mut RigidBody,
-        body_b: &mut RigidBody,
-        data: &CollisionData
-    ) {
+impl Collider for Plane {
+    fn calculate_inverse_inertia_tensor(&self, mass: f64) -> Matrix3x3 {
+        Matrix3x3::ZERO
+    }
+
+    fn collides(&self, this_transform: &Matrix4x4, other: &impl Collider, other_transform: &Matrix4x4) -> Option<CollisionData> {
+        other.collides_with_plane(other_transform, self)
+    }
+
+    fn collides_with_sphere(&self, this_transform: &Matrix4x4, sphere: &Sphere, other_transform: &Matrix4x4) -> Option<CollisionData> {
+        return if let Some(mut collision_data) = sphere_vs_plane(sphere, other_transform, self) {
+            for contact in &mut collision_data.contacts {
+                contact.normal = -contact.normal;
+            }
+
+            Some(collision_data)
+        } else {
+            None
+        }
+    }
+
+    fn collides_with_plane(&self, this_transform: &Matrix4x4, plane: &Plane) -> Option<CollisionData> {
+        warn!("Plane vs Plane collision is not supported");
+
+        None
+    }
+}
+
+impl CollisionData {
+    pub fn solve(&self, body_a: &mut RigidBody, body_b: &mut RigidBody) {
         let total_inverse_mass = body_a.inverse_mass + body_b.inverse_mass;
         let relative_velocity = body_a.linear_velocity - body_b.linear_velocity;
 
-        for contact in &data.contacts {
-            let normal_velocity = relative_velocity.dot(&contact.normal);
-
-            if normal_velocity > 0.0 { return }
-
-            let restitution = 0.5;
-            let impulse = -(1.0 + restitution) * normal_velocity / total_inverse_mass;
-            let impulse_vector = impulse * contact.normal;
-
-            body_a.linear_velocity += impulse_vector * body_a.inverse_mass;
-            body_b.linear_velocity -= impulse_vector * body_b.inverse_mass;
-        }
-    }
-
-    pub fn resolve_penetration(
-        body_a: &mut RigidBody,
-        body_b: &mut RigidBody,
-        data: &CollisionData
-    ) {
-        let total_inverse_mass = body_a.inverse_mass + body_b.inverse_mass;
-
-        for contact in &data.contacts {
+        for contact in &self.contacts {
             let move_per_mass = contact.normal * (contact.penetration / total_inverse_mass);
 
-            body_a.position += move_per_mass * body_a.inverse_mass;
-            body_b.position -= move_per_mass * body_b.inverse_mass;
+            if body_a.inverse_mass > 0.0 {
+                body_a.position -= move_per_mass * body_a.inverse_mass;
+            }
+            if body_b.inverse_mass > 0.0 {
+                body_b.position += move_per_mass * body_b.inverse_mass;
+            }
+
+            let normal_velocity = relative_velocity.dot(&contact.normal);
+
+            if normal_velocity <= 0.0 { return; }
+
+            let impulse = -1.5 * normal_velocity / total_inverse_mass;
+
+            if body_a.inverse_mass > 0.0 {
+                body_a.linear_velocity += impulse * contact.normal * body_a.inverse_mass;
+            }
+            if body_b.inverse_mass > 0.0 {
+                body_b.linear_velocity -= impulse * contact.normal * body_b.inverse_mass;
+            }
         }
     }
+}
+
+fn sphere_vs_sphere(
+    sphere_a: &Sphere,
+    transform_a: &Matrix4x4,
+    sphere_b: &Sphere,
+    transform_b: &Matrix4x4
+) -> Option<CollisionData> {
+    let center_a = transform_a.translation();
+    let center_b = transform_b.translation();
+
+    let delta = center_a - center_b;
+    let distance_sq = delta.magnitude_sq();
+    let radius_sum = sphere_a.radius + sphere_b.radius;
+
+    if distance_sq > radius_sum * radius_sum { return None; }
+
+    let distance = distance_sq.sqrt();
+    let normal = delta * (1.0 / distance);
+
+    let contact = Contact {
+        point: center_a + normal * sphere_a.radius,
+        normal,
+        penetration: radius_sum - distance
+    };
+
+    Some(CollisionData { contacts: vec![contact] })
+}
+
+fn sphere_vs_plane(
+    sphere: &Sphere,
+    transform_sphere: &Matrix4x4,
+    plane: &Plane
+) -> Option<CollisionData> {
+    let sphere_center = transform_sphere.translation();
+    let distance_to_plane = sphere_center.dot(&plane.normal) - plane.offset;
+
+    if distance_to_plane > sphere.radius { return None; }
+
+    let contact = Contact {
+        point: sphere_center - plane.normal * (distance_to_plane - sphere.radius),
+        normal: plane.normal,
+        penetration: sphere.radius - distance_to_plane
+    };
+
+    Some(CollisionData { contacts: vec![contact] })
 }
