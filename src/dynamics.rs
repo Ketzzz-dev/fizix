@@ -37,7 +37,7 @@ impl RigidBody {
     pub fn dynamic_body(settings: DynamicRigidBodySettings, collider: &impl Collider) -> Self {
         let mut rigid_body = Self {
             position: settings.position,
-            orientation: settings.orientation,
+            orientation: settings.orientation.normalized(),
 
             linear_velocity: settings.linear_velocity,
             rotational_velocity: settings.rotational_velocity,
@@ -61,7 +61,7 @@ impl RigidBody {
     pub fn static_body(settings: StaticRigidBodySettings) -> Self {
         let mut rigid_body = Self {
             position: settings.position,
-            orientation: settings.orientation,
+            orientation: settings.orientation.normalized(),
 
             linear_velocity: Vector3::ZERO,
             rotational_velocity: Vector3::ZERO,
@@ -78,12 +78,17 @@ impl RigidBody {
         };
 
         rigid_body.calculate_transform();
-        rigid_body.calculate_inertia_tensor();
 
         rigid_body
     }
 
+    pub fn has_infinite_mass(&self) -> bool {
+        self.inverse_mass == 0.0
+    }
+
     pub fn update(&mut self, delta_time: f64) {
+        if self.inverse_mass == 0.0 { return }
+
         let linear_acceleration = self.inverse_mass * self.force;
         let rotational_acceleration = self.inverse_inertia_tensor_world * self.torque;
 
@@ -118,19 +123,19 @@ impl RigidBody {
         let xx = self.orientation.x * self.orientation.x;
         let xz = self.orientation.x * self.orientation.z;
 
-        self.transform.m11 = 1.0 - 2.0 * yy - 2.0 * zz;
-        self.transform.m12 = 2.0 * xy - 2.0 * wz;
-        self.transform.m13 = 2.0 * xz + 2.0 * wy;
+        self.transform.m11 = 1.0 - 2.0 * (yy + zz);
+        self.transform.m12 = 2.0 * (xy - wz);
+        self.transform.m13 = 2.0 * (xz + wy);
         self.transform.m14 = self.position.x;
 
-        self.transform.m21 = 2.0 * xy + 2.0 * wz;
-        self.transform.m22 = 1.0 - 2.0 * xx - 2.0 * zz;
-        self.transform.m23 = 2.0 * yz - 2.0 * wx;
+        self.transform.m21 = 2.0 * (xy + wz);
+        self.transform.m22 = 1.0 - 2.0 * (xx + zz);
+        self.transform.m23 = 2.0 * (yz - wx);
         self.transform.m24 = self.position.y;
 
-        self.transform.m31 = 2.0 * xz - 2.0 * wy;
-        self.transform.m32 = 2.0 * yz + 2.0 * wx;
-        self.transform.m33 = 1.0 - 2.0 * xx - 2.0 * yy;
+        self.transform.m31 = 2.0 * (xz - wy);
+        self.transform.m32 = 2.0 * (yz + wx);
+        self.transform.m33 = 1.0 - 2.0 * (xx + yy);
         self.transform.m34 = self.position.z;
     }
 

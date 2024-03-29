@@ -2,7 +2,7 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use log::warn;
 
 // Structures
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Vector3 {
     pub x: f64,
     pub y: f64,
@@ -339,6 +339,13 @@ impl Matrix4x4 {
         }
     }
 
+    pub fn axes(&self) -> (Vector3, Vector3, Vector3) {
+        (
+            Vector3 { x: self.m11, y: self.m21, z: self.m31 },
+            Vector3 { x: self.m12, y: self.m22, z: self.m32 },
+            Vector3 { x: self.m13, y: self.m23, z: self.m33 }
+        )
+    }
     pub fn translation(&self) -> Vector3 {
         Vector3 {
             x: self.m14,
