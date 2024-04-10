@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 three-d = "0.17.0"
 log = "0.4.20"
+nalgebra = "0.32.5"
