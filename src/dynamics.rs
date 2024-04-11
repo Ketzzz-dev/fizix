@@ -1,12 +1,13 @@
 use nalgebra::{Matrix3, Matrix4, Point3, Quaternion, Vector3, zero};
+use three_d::Zero;
 use crate::collisions::Collider;
 
-pub struct RigidBody {
+pub struct RigidBody<C: Collider> {
     pub position: Point3<f64>,
     pub orientation: Quaternion<f64>,
 
     pub linear_velocity: Vector3<f64>,
-    pub rotational_velocity: Vector3<f64>,
+    pub angular_velocity: Vector3<f64>,
 
     pub force: Vector3<f64>,
     pub torque: Vector3<f64>,
@@ -16,31 +17,18 @@ pub struct RigidBody {
     pub inverse_inertia_tensor_local: Matrix3<f64>,
     pub inverse_inertia_tensor_world: Matrix3<f64>,
 
+    pub collider: C,
     pub transform: Matrix4<f64>
 }
 
-pub struct DynamicRigidBodySettings {
-    pub position: Point3<f64>,
-    pub orientation: Quaternion<f64>,
-
-    pub linear_velocity: Vector3<f64>,
-    pub rotational_velocity: Vector3<f64>,
-
-    pub mass: f64,
-}
-pub struct StaticRigidBodySettings {
-    pub position: Point3<f64>,
-    pub orientation: Quaternion<f64>
-}
-
-impl RigidBody {
-    pub fn dynamic_body(settings: DynamicRigidBodySettings, collider: &impl Collider) -> Self {
+impl<C: Collider> RigidBody<C> {
+    pub fn dynamic_body(settings: DynamicRigidBodySettings, collider: C) -> Self {
         let mut rigid_body = Self {
             position: settings.position,
             orientation: settings.orientation,
 
             linear_velocity: settings.linear_velocity,
-            rotational_velocity: settings.rotational_velocity,
+            angular_velocity: settings.angular_velocity,
 
             force: zero(),
             torque: zero(),
@@ -50,6 +38,7 @@ impl RigidBody {
             inverse_inertia_tensor_local: collider.calculate_inverse_inertia_tensor(settings.mass),
             inverse_inertia_tensor_world: Matrix3::identity(),
 
+            collider,
             transform: Matrix4::identity()
         };
 
@@ -58,13 +47,13 @@ impl RigidBody {
 
         rigid_body
     }
-    pub fn static_body(settings: StaticRigidBodySettings) -> Self {
+    pub fn static_body(settings: StaticRigidBodySettings, collider: C) -> Self {
         let mut rigid_body = Self {
             position: settings.position,
             orientation: settings.orientation,
 
             linear_velocity: zero(),
-            rotational_velocity: zero(),
+            angular_velocity: zero(),
 
             force: zero(),
             torque: zero(),
@@ -74,6 +63,7 @@ impl RigidBody {
             inverse_inertia_tensor_local: zero(),
             inverse_inertia_tensor_world: zero(),
 
+            collider,
             transform: Matrix4::identity()
         };
 
@@ -87,22 +77,34 @@ impl RigidBody {
     }
 
     pub fn update(&mut self, delta_time: f64) {
+        self.integrate(delta_time);
+        self.calculate_transform();
+        self.calculate_inertia_tensor();
+    }
+
+    // leapfrog integration
+    fn integrate(&mut self, delta_time: f64) {
         let linear_acceleration = self.inverse_mass * self.force;
-        let rotational_acceleration = self.inverse_inertia_tensor_world * self.torque;
+        let angular_acceleration = self.inverse_inertia_tensor_world * self.torque;
+        let half_delta_time = 0.5 * delta_time;
 
-        self.linear_velocity += linear_acceleration * delta_time;
-        self.rotational_velocity += rotational_acceleration * delta_time;
+        // half-step velocities
+        self.linear_velocity += linear_acceleration * half_delta_time;
+        self.angular_velocity += angular_acceleration * half_delta_time;
 
+        // full step positions
         self.position += self.linear_velocity * delta_time;
-        self.orientation += delta_time * 0.5 * Quaternion::new(0.0, self.rotational_velocity.x, self.rotational_velocity.y, self.rotational_velocity.z) * self.orientation;
+        self.orientation += Quaternion::from_imag(0.5 * self.angular_velocity) * self.orientation * delta_time;
 
         self.orientation.normalize_mut();
 
-        self.force = zero();
-        self.torque = zero();
+        // 2nd half-step velocities (full step)
+        self.linear_velocity += linear_acceleration * half_delta_time;
+        self.angular_velocity += angular_acceleration * half_delta_time;
 
-        self.calculate_transform();
-        self.calculate_inertia_tensor();
+        // reset forces
+        self.force.set_zero();
+        self.torque.set_zero();
     }
 
     fn calculate_transform(&mut self) {
@@ -139,8 +141,19 @@ impl RigidBody {
             self.transform.m31, self.transform.m32, self.transform.m33
         );
 
+        // world_tensor = R * local_tensor * R^T
         self.inverse_inertia_tensor_world = rotation_matrix * self.inverse_inertia_tensor_local * rotation_matrix.transpose();
     }
+}
+
+pub struct DynamicRigidBodySettings {
+    pub position: Point3<f64>,
+    pub orientation: Quaternion<f64>,
+
+    pub linear_velocity: Vector3<f64>,
+    pub angular_velocity: Vector3<f64>,
+
+    pub mass: f64,
 }
 
 impl Default for DynamicRigidBodySettings {
@@ -150,12 +163,18 @@ impl Default for DynamicRigidBodySettings {
             orientation: Quaternion::identity(),
 
             linear_velocity: zero(),
-            rotational_velocity: zero(),
+            angular_velocity: zero(),
 
             mass: 1.0
         }
     }
 }
+
+pub struct StaticRigidBodySettings {
+    pub position: Point3<f64>,
+    pub orientation: Quaternion<f64>
+}
+
 impl Default for StaticRigidBodySettings {
     fn default() -> Self {
         Self {
