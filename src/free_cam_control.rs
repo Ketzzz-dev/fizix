@@ -1,4 +1,6 @@
-use three_d::{Camera, CameraAction, CameraControl, Event, Key, Matrix3, SquareMatrix, Vector3, Zero};
+use three_d::{
+    Camera, CameraAction, CameraControl, Event, Key, Matrix3, SquareMatrix, Vector3, Zero,
+};
 
 pub struct FreeCamControl {
     control: CameraControl,
@@ -8,7 +10,7 @@ pub struct FreeCamControl {
     deceleration: f32,
 
     direction: Vector3<f32>,
-    velocity: Vector3<f32>
+    velocity: Vector3<f32>,
 }
 
 impl FreeCamControl {
@@ -35,12 +37,12 @@ impl FreeCamControl {
     }
 
     pub fn handle_events(&mut self, camera: &mut Camera, events: &mut [Event]) -> bool {
-        for event in &mut *events {
-             match *event {
-                 Event::KeyPress { kind, .. } => self.handle_keys(kind, true),
-                 Event::KeyRelease { kind, .. } => self.handle_keys(kind, false),
+        for event in events.iter() {
+            match *event {
+                Event::KeyPress { kind, .. } => self.handle_keys(kind, true),
+                Event::KeyRelease { kind, .. } => self.handle_keys(kind, false),
 
-                 _ => {}
+                _ => {}
             }
         }
 
@@ -56,7 +58,11 @@ impl FreeCamControl {
 
         let target_velocity = rotation_matrix * self.direction * self.speed;
         let delta_velocity = target_velocity - self.velocity;
-        let acceleration_rate = if self.direction.is_zero() { self.deceleration } else { self.acceleration };
+        let acceleration_rate = if self.direction.is_zero() {
+            self.deceleration
+        } else {
+            self.acceleration
+        };
 
         self.velocity += delta_velocity * acceleration_rate * delta_time as f32;
 
