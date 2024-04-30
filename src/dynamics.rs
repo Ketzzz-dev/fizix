@@ -1,141 +1,32 @@
-use crate::collisions::{Collider, ResolutionInfo};
-use nalgebra::{zero, Matrix3, Matrix4, Point3, Quaternion, Vector3};
-use std::ops::Deref;
-use three_d::Zero;
+use crate::aliases::{Point3, Quaternion, RotationMatrix, TransformMatrix, Vector3};
+use crate::collisions::Collider;
+use crate::collisions::narrow_phase::{CollisionManifold, test_collision};
+use crate::dynamics::solvers::resolve_collision;
 
-pub struct World {
-    pub bodies: Vec<RigidBody>,
-    pub colliders: Vec<Box<dyn Collider>>,
-
-    pub gravity: Vector3<f64>
-}
-impl World {
-    pub fn new() -> Self {
-        Self {
-            bodies: vec![],
-            colliders: vec![],
-
-            gravity: Vector3::new(0.0, 9.81, 0.0)
-        }
-    }
-
-    pub fn create_dynamic_body(
-        &mut self,
-        settings: DynamicRigidBodySettings,
-        collider: impl Collider + 'static
-    ) -> usize {
-        let index = self.bodies.len();
-
-        self.bodies.push(RigidBody::dynamic_body(settings, &collider));
-        self.colliders.push(Box::new(collider));
-
-        index
-    }
-    pub fn create_static_body(
-        &mut self,
-        settings: StaticRigidBodySettings,
-        collider: impl Collider + 'static
-    ) -> usize {
-        let index = self.bodies.len();
-
-        self.bodies.push(RigidBody::static_body(settings));
-        self.colliders.push(Box::new(collider));
-
-        index
-    }
-    pub fn get_body(&self, index: usize) -> Option<&RigidBody> {
-        self.bodies.get(index)
-    }
-    pub fn get_body_mut(&mut self, index: usize) -> Option<&mut RigidBody> {
-        self.bodies.get_mut(index)
-    }
-    pub fn get_collider(&self, index: usize) -> Option<&Box<dyn Collider>> {
-        self.colliders.get(index)
-    }
-    pub fn get_collider_mut(&mut self, index: usize) -> Option<&mut Box<dyn Collider>> {
-        self.colliders.get_mut(index)
-    }
-
-    pub fn update(&mut self, delta_time: f64) {
-        let mut collisions = vec![];
-        let len = self.bodies.len();
-
-        for a in 0..len {
-            for b in a + 1..len {
-                let (body_a, body_b) = (&self.bodies[a], &self.bodies[b]);
-
-                if body_a.has_finite_mass() || body_b.has_finite_mass() {
-                    let (collider_a, collider_b) = (&self.colliders[a], &self.colliders[b]);
-
-                    if let Some(collision_data) = collider_a.collides(
-                        &body_a.transform,
-                        collider_b.deref(),
-                        &body_b.transform
-                    ) {
-                        collisions.push((collision_data, a, b));
-                    }
-                }
-            }
-        }
-        for (collision_data, a, b) in collisions {
-            let (body_a, body_b) = (&self.bodies[a], &self.bodies[b]);
-
-            if let Some(ResolutionInfo {
-                linear_impulse,
-                angular_impulse_a,
-                angular_impulse_b,
-                correction
-            }) = collision_data.solve(body_a, body_b) {
-                let body_a = &mut self.bodies[a];
-
-                if body_a.has_finite_mass() {
-                    body_a.linear_velocity -= body_a.inverse_mass * linear_impulse;
-                    body_a.angular_velocity -= body_a.inverse_inertia_tensor_world * angular_impulse_a;
-                    body_a.position -= body_a.inverse_mass * correction;
-                }
-
-                let body_b = &mut self.bodies[b];
-
-                if body_b.has_finite_mass() {
-                    body_b.linear_velocity += body_b.inverse_mass * linear_impulse;
-                    body_b.angular_velocity += body_b.inverse_inertia_tensor_world * angular_impulse_b;
-                    body_b.position += body_b.inverse_mass * correction;
-                }
-            }
-        }
-        for body in self.bodies.iter_mut() {
-            if body.has_finite_mass() {
-                body.force -= self.gravity / body.inverse_mass;
-
-                body.update(delta_time);
-            }
-        }
-    }
-}
+pub mod solvers;
 
 pub struct RigidBody {
-    pub position: Point3<f64>,
-    pub orientation: Quaternion<f64>,
+    pub position: Point3,
+    pub orientation: Quaternion,
 
-    pub linear_velocity: Vector3<f64>,
-    pub angular_velocity: Vector3<f64>,
+    pub linear_velocity: Vector3,
+    pub angular_velocity: Vector3,
 
     pub linear_damping: f64,
     pub angular_damping: f64,
 
-    pub force: Vector3<f64>,
-    pub torque: Vector3<f64>,
+    pub force: Vector3,
+    pub torque: Vector3,
 
     pub inverse_mass: f64,
 
-    pub inverse_inertia_tensor_local: Matrix3<f64>,
-    pub inverse_inertia_tensor_world: Matrix3<f64>,
+    pub inverse_inertia_tensor_local: RotationMatrix,
+    pub inverse_inertia_tensor_world: RotationMatrix,
 
-    pub transform: Matrix4<f64>
+    pub transform_matrix: TransformMatrix
 }
-
 impl RigidBody {
-    pub fn dynamic_body(settings: DynamicRigidBodySettings, collider: &impl Collider) -> Self {
+    pub fn dynamic_body(settings: DynamicRigidBodySettings, collider: &Collider) -> Self {
         assert!(settings.mass > 0.0, "Mass must be greater than zero");
 
         let mut rigid_body = Self {
@@ -148,15 +39,15 @@ impl RigidBody {
             linear_damping: settings.linear_damping.clamp(0.0, 1.0),
             angular_damping: settings.angular_damping.clamp(0.0, 1.0),
 
-            force: zero(),
-            torque: zero(),
+            force: Vector3::zeros(),
+            torque: Vector3::zeros(),
 
             inverse_mass: 1.0 / settings.mass,
 
-            inverse_inertia_tensor_local: collider.calculate_inverse_inertia_tensor(settings.mass),
-            inverse_inertia_tensor_world: zero(),
+            inverse_inertia_tensor_local: collider.inverse_inertia_tensor(settings.mass),
+            inverse_inertia_tensor_world: RotationMatrix::zeros(),
 
-            transform: Matrix4::identity()
+            transform_matrix: TransformMatrix::identity()
         };
 
         rigid_body.calculate_transform();
@@ -169,21 +60,21 @@ impl RigidBody {
             position: settings.position,
             orientation: settings.orientation,
 
-            linear_velocity: zero(),
-            angular_velocity: zero(),
+            linear_velocity: Vector3::zeros(),
+            angular_velocity: Vector3::zeros(),
 
             linear_damping: 0.0,
             angular_damping: 0.0,
 
-            force: zero(),
-            torque: zero(),
+            force: Vector3::zeros(),
+            torque: Vector3::zeros(),
 
             inverse_mass: 0.0,
 
-            inverse_inertia_tensor_local: zero(),
-            inverse_inertia_tensor_world: zero(),
+            inverse_inertia_tensor_local: RotationMatrix::zeros(),
+            inverse_inertia_tensor_world: RotationMatrix::zeros(),
 
-            transform: Matrix4::identity()
+            transform_matrix: TransformMatrix::identity()
         };
 
         rigid_body.calculate_transform();
@@ -215,8 +106,8 @@ impl RigidBody {
 
         // full step positions
         self.position += self.linear_velocity * delta_time;
-        self.orientation +=
-            Quaternion::from_imag(0.5 * self.angular_velocity) * self.orientation * delta_time;
+        self.orientation += Quaternion::from_imag(0.5 * self.angular_velocity)
+            * self.orientation * delta_time;
 
         self.orientation.normalize_mut();
 
@@ -229,8 +120,8 @@ impl RigidBody {
         self.angular_velocity *= self.angular_damping.powf(delta_time);
 
         // reset forces
-        self.force.set_zero();
-        self.torque.set_zero();
+        self.force = Vector3::zeros();
+        self.torque = Vector3::zeros();
     }
 
     fn calculate_transform(&mut self) {
@@ -245,34 +136,24 @@ impl RigidBody {
         let ii = self.orientation.i * self.orientation.i;
         let ik = self.orientation.i * self.orientation.k;
 
-        self.transform.m11 = 1.0 - 2.0 * (jj + kk);
-        self.transform.m12 = 2.0 * (ij - wk);
-        self.transform.m13 = 2.0 * (ik + wj);
-        self.transform.m14 = self.position.x;
+        self.transform_matrix.m11 = 1.0 - 2.0 * (jj + kk);
+        self.transform_matrix.m12 = 2.0 * (ij - wk);
+        self.transform_matrix.m13 = 2.0 * (ik + wj);
+        self.transform_matrix.m14 = self.position.x;
 
-        self.transform.m21 = 2.0 * (ij + wk);
-        self.transform.m22 = 1.0 - 2.0 * (ii + kk);
-        self.transform.m23 = 2.0 * (jk - wi);
-        self.transform.m24 = self.position.y;
+        self.transform_matrix.m21 = 2.0 * (ij + wk);
+        self.transform_matrix.m22 = 1.0 - 2.0 * (ii + kk);
+        self.transform_matrix.m23 = 2.0 * (jk - wi);
+        self.transform_matrix.m24 = self.position.y;
 
-        self.transform.m31 = 2.0 * (ik - wj);
-        self.transform.m32 = 2.0 * (jk + wi);
-        self.transform.m33 = 1.0 - 2.0 * (ii + jj);
-        self.transform.m34 = self.position.z;
+        self.transform_matrix.m31 = 2.0 * (ik - wj);
+        self.transform_matrix.m32 = 2.0 * (jk + wi);
+        self.transform_matrix.m33 = 1.0 - 2.0 * (ii + jj);
+        self.transform_matrix.m34 = self.position.z;
     }
 
     fn calculate_inertia_tensor(&mut self) {
-        let rotation_matrix = Matrix3::new(
-            self.transform.m11,
-            self.transform.m12,
-            self.transform.m13,
-            self.transform.m21,
-            self.transform.m22,
-            self.transform.m23,
-            self.transform.m31,
-            self.transform.m32,
-            self.transform.m33,
-        );
+        let rotation_matrix = self.transform_matrix.fixed_view::<3, 3>(0, 0);
 
         // world_tensor = R * local_tensor * R^T
         self.inverse_inertia_tensor_world =
@@ -281,18 +162,17 @@ impl RigidBody {
 }
 
 pub struct DynamicRigidBodySettings {
-    pub position: Point3<f64>,
-    pub orientation: Quaternion<f64>,
+    pub position: Point3,
+    pub orientation: Quaternion,
 
-    pub linear_velocity: Vector3<f64>,
-    pub angular_velocity: Vector3<f64>,
+    pub linear_velocity: Vector3,
+    pub angular_velocity: Vector3,
 
     pub linear_damping: f64,
     pub angular_damping: f64,
 
     pub mass: f64,
 }
-
 impl Default for DynamicRigidBodySettings {
     fn default() -> Self {
         Self {
@@ -302,8 +182,8 @@ impl Default for DynamicRigidBodySettings {
             linear_damping: 0.9,
             angular_damping: 0.9,
 
-            linear_velocity: zero(),
-            angular_velocity: zero(),
+            linear_velocity: Vector3::zeros(),
+            angular_velocity: Vector3::zeros(),
 
             mass: 1.0,
         }
@@ -311,15 +191,125 @@ impl Default for DynamicRigidBodySettings {
 }
 
 pub struct StaticRigidBodySettings {
-    pub position: Point3<f64>,
-    pub orientation: Quaternion<f64>,
+    pub position: Point3,
+    pub orientation: Quaternion,
 }
-
 impl Default for StaticRigidBodySettings {
     fn default() -> Self {
         Self {
             position: Point3::origin(),
             orientation: Quaternion::identity(),
+        }
+    }
+}
+
+pub struct World {
+    pub bodies: Vec<RigidBody>,
+    pub colliders: Vec<Collider>,
+    pub collisions: Vec<(CollisionManifold, usize, usize)>,
+
+    pub gravity: Vector3
+}
+impl World {
+    pub fn new() -> Self {
+        Self {
+            bodies: vec![],
+            colliders: vec![],
+            collisions: vec![],
+
+            gravity: Vector3::new(0.0, 9.81, 0.0)
+        }
+    }
+
+    pub fn create_dynamic_body(
+        &mut self,
+        settings: DynamicRigidBodySettings,
+        collider: Collider
+    ) -> usize {
+        let index = self.bodies.len();
+
+        self.bodies.push(RigidBody::dynamic_body(settings, &collider));
+        self.colliders.push(collider);
+
+        index
+    }
+    pub fn create_static_body(
+        &mut self,
+        settings: StaticRigidBodySettings,
+        collider: Collider
+    ) -> usize {
+        let index = self.bodies.len();
+
+        self.bodies.push(RigidBody::static_body(settings));
+        self.colliders.push(collider);
+
+        index
+    }
+
+    pub fn get_body(&self, index: usize) -> Option<&RigidBody> {
+        self.bodies.get(index)
+    }
+    pub fn get_body_mut(&mut self, index: usize) -> Option<&mut RigidBody> {
+        self.bodies.get_mut(index)
+    }
+    pub fn get_collider(&self, index: usize) -> Option<&Collider> {
+        self.colliders.get(index)
+    }
+    pub fn get_collider_mut(&mut self, index: usize) -> Option<&mut Collider> {
+        self.colliders.get_mut(index)
+    }
+
+    pub fn update(&mut self, delta_time: f64) {
+        self.collisions.clear();
+
+        for a in 0..self.bodies.len() {
+            for b in a + 1..self.bodies.len() {
+                let body_a = &self.bodies[a];
+                let body_b = &self.bodies[b];
+
+                if body_a.has_finite_mass() || body_b.has_finite_mass() {
+                    let collider_a = &self.colliders[a];
+                    let collider_b = &self.colliders[b];
+
+                    if let Some(manifold) = test_collision(
+                        collider_a,
+                        &body_a.transform_matrix,
+                        collider_b,
+                        &body_b.transform_matrix
+                    ) {
+                        self.collisions.push((manifold, a, b));
+                    }
+                }
+            }
+        }
+        for (manifold, a, b) in self.collisions.iter() {
+            let body_a = &self.bodies[*a];
+            let body_b = &self.bodies[*b];
+
+            let resolution_data = resolve_collision(manifold, body_a, body_b);
+
+            let body_a = &mut self.bodies[*a];
+
+            if body_a.has_finite_mass() {
+                body_a.linear_velocity += body_a.inverse_mass * resolution_data.linear_impulse;
+                body_a.angular_velocity += body_a.inverse_inertia_tensor_world * resolution_data.angular_impulse_a;
+                body_a.position += body_a.inverse_mass * resolution_data.correction;
+            }
+
+            let body_b = &mut self.bodies[*b];
+
+            if body_b.has_finite_mass() {
+                body_b.linear_velocity -= body_b.inverse_mass * resolution_data.linear_impulse;
+                body_b.angular_velocity -= body_b.inverse_inertia_tensor_world * resolution_data.angular_impulse_b;
+                body_b.position -= body_b.inverse_mass * resolution_data.correction;
+            }
+        }
+        for body in self.bodies.iter_mut() {
+            if body.has_finite_mass() {
+                body.force -= self.gravity / body.inverse_mass;
+
+                body.update(delta_time);
+            }
         }
     }
 }
