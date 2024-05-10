@@ -45,7 +45,7 @@ macro_rules! test_axis {
     };
 }
 
-pub const NORM_EPSILON: f64 = 0.0001;
+pub const EPSILON: f64 = 1e-3;
 
 pub struct CollisionManifold {
     pub contacts: Vec<Point3>,
@@ -104,14 +104,14 @@ pub fn test_collision(
         },
         (Collider::Cuboid {
             local_vertices: local_vertices_a,
-            half_extents: half_extents_a
+            ..
         }, Collider::Cuboid {
             local_vertices: local_vertices_b,
-            half_extents:  half_extents_b
+            ..
         }) => {
             cuboid_vs_cuboid(
-                local_vertices_a, *half_extents_a, transform_a,
-                local_vertices_b, *half_extents_b, transform_b
+                local_vertices_a, transform_a,
+                local_vertices_b, transform_b
             )
         }
         _ => None
@@ -236,10 +236,8 @@ pub fn cuboid_vs_plane(
 
 pub fn cuboid_vs_cuboid(
     local_vertices_a: &[Point3],
-    half_extents_a: Vector3,
     transform_a: &TransformMatrix,
     local_vertices_b: &[Point3],
-    half_extents_b: Vector3,
     transform_b: &TransformMatrix
 ) -> Option<CollisionManifold> {
     let axes_a = axes!(transform_a);
@@ -258,43 +256,190 @@ pub fn cuboid_vs_cuboid(
     for axis in axes_b.iter() {
         test_axis!(axis, AxisCollision::FaceB, world_vertices_a, world_vertices_b, min_overlap, best_axis, collision_axis);
     }
+    for a in axes_a.iter() {
+        for b in axes_b.iter() {
+            let cross = a.cross(b);
 
-    let mut edge_axes = vec![];
+            if cross.norm_squared() <= EPSILON { continue; }
 
-    for (a, b) in axes_a.iter().zip(axes_b.iter()) {
-        let cross = a.cross(b);
+            let axis = cross.normalize();
 
-        if cross.norm_squared() <= NORM_EPSILON { continue; }
-
-        let axis = cross.normalize();
-
-        edge_axes.push(axis);
-        test_axis!(&axis, AxisCollision::Edges, world_vertices_a, world_vertices_b, min_overlap, best_axis, collision_axis);
+            test_axis!(&axis, AxisCollision::Edges, world_vertices_a, world_vertices_b, min_overlap, best_axis, collision_axis);
+        }
     }
 
-    let local_axes = [
-        Vector3::x(),
-        Vector3::y(),
-        Vector3::z()
-    ];
+    let position_a = position!(transform_a);
+    let position_b = position!(transform_b);
+    let direction = position_a - position_b;
 
-    let direction = position!(transform_a) - position!(transform_b);
-    let direction = direction.dot(&best_axis);
+    if direction.dot(&best_axis) < 0.0 {
+        best_axis.neg_mut();
+    }
 
     let mut contacts = vec![];
 
     match collision_axis {
         AxisCollision::FaceA => {
+            let reference_face_normal = -best_axis;
 
+            let mut min_dot = f64::INFINITY;
+            let mut incident_face_vertices = (0, 0, 0, 0) ;
+
+            for (i, normal) in Collider::CUBOID_FACE_NORMALS.iter().enumerate() {
+                let normal = transform_b.transform_vector(normal);
+                let dot = normal.dot(&reference_face_normal);
+
+                if dot < min_dot {
+                    min_dot = dot;
+                    incident_face_vertices = Collider::CUBOID_FACE_VERTICES[i];
+                }
+            }
+
+            let half_extents = world_vertices_a.first()?.coords;
+            let mut clipped_vertices = vec![
+                world_vertices_b[incident_face_vertices.0],
+                world_vertices_b[incident_face_vertices.1],
+                world_vertices_b[incident_face_vertices.2],
+                world_vertices_b[incident_face_vertices.3]
+            ];
+
+            for axis in axes_a.iter() {
+                if axis.dot(&reference_face_normal).abs() > EPSILON { continue; }
+
+                let offset = half_extents.dot(axis);
+
+                clipped_vertices = clip_points_to_plane(&clipped_vertices, *axis, offset);
+                clipped_vertices = clip_points_to_plane(&clipped_vertices, -axis, offset);
+            }
+
+            let mut max_offset = f64::NEG_INFINITY;
+
+            for vertex in world_vertices_a.iter() {
+                let offset = vertex.coords.dot(&reference_face_normal);
+
+                if offset > max_offset {
+                    max_offset = offset;
+                }
+            }
+            for vertex in clipped_vertices.iter() {
+                let distance = vertex.coords.dot(&reference_face_normal);
+
+                if distance <= max_offset {
+                    let depth = max_offset - distance;
+
+                    contacts.push(vertex + reference_face_normal * depth);
+                }
+            }
         }
         AxisCollision::FaceB => {
+            let reference_face_normal = best_axis;
 
+            let mut min_dot = f64::INFINITY;
+            let mut incident_face_vertices = (0, 0, 0, 0) ;
+
+            for (i, normal) in Collider::CUBOID_FACE_NORMALS.iter().enumerate() {
+                let normal = transform_a.transform_vector(normal);
+                let dot = normal.dot(&reference_face_normal);
+
+                if dot < min_dot {
+                    min_dot = dot;
+                    incident_face_vertices = Collider::CUBOID_FACE_VERTICES[i];
+                }
+            }
+
+            let half_extents = world_vertices_b.first()?.coords;
+            let mut clipped_vertices = vec![
+                world_vertices_a[incident_face_vertices.0],
+                world_vertices_a[incident_face_vertices.1],
+                world_vertices_a[incident_face_vertices.2],
+                world_vertices_a[incident_face_vertices.3]
+            ];
+
+            for axis in axes_b.iter() {
+                if axis.dot(&reference_face_normal).abs() > EPSILON { continue; }
+
+                let offset = half_extents.dot(axis);
+
+                clipped_vertices = clip_points_to_plane(&clipped_vertices, *axis, offset);
+                clipped_vertices = clip_points_to_plane(&clipped_vertices, -axis, offset);
+            }
+
+            let mut max_offset = f64::NEG_INFINITY;
+
+            for vertex in world_vertices_b.iter() {
+                let offset = vertex.coords.dot(&reference_face_normal);
+
+                if offset > max_offset {
+                    max_offset = offset;
+                }
+            }
+            for vertex in clipped_vertices.iter() {
+                let distance = vertex.coords.dot(&reference_face_normal);
+
+                if distance <= max_offset {
+                    let depth = max_offset - distance;
+
+                    contacts.push(vertex + reference_face_normal * depth);
+                }
+            }
         }
-        AxisCollision::Edges => {}
-    }
+        AxisCollision::Edges => {
+            let edge_a = get_support_edge(&world_vertices_a, -best_axis);
+            let edge_b = get_support_edge(&world_vertices_b, best_axis);
 
-    if direction < 0.0 {
-        best_axis.neg_mut();
+            let d1 = edge_a.1 - edge_a.0;
+            let d2 = edge_b.1 - edge_b.0;
+            let r = edge_a.0 - edge_b.0;
+
+            let a = d1.norm_squared();
+            let e = d2.norm_squared();
+            let f = d2.dot(&r);
+
+            if a <= EPSILON && e <= EPSILON {
+                contacts.push((0.5 * (edge_a.0.coords + edge_b.0.coords)).into());
+            }
+
+            let mut s;
+            let mut t;
+
+            if a <= EPSILON {
+                s = 0.0;
+                t = (f / e).clamp(0.0, 1.0);
+            } else {
+                let c = d1.dot(&r);
+
+                if e <= EPSILON {
+                    t = 0.0;
+                    s = (-c / a).clamp(0.0, 1.0);
+                } else {
+                    let b = d1.dot(&d2);
+                    let denom = a * e - b * b;
+
+                    if denom != 0.0 {
+                        s = ((b * f - c * e) / denom).clamp(0.0, 1.0);
+                    } else {
+                        s = 0.0;
+                    }
+
+                    let nom = b * s + f;
+
+                    if nom < 0.0 {
+                        t = 0.0;
+                        s = (-c / a).clamp(0.0, 1.0);
+                    } else if nom > e {
+                        t = 1.0;
+                        s = ((b - c) / a).clamp(0.0, 1.0);
+                    } else {
+                        t = nom / e;
+                    }
+                }
+            }
+
+            let c1 = edge_a.0 + s * d1;
+            let c2 = edge_b.0 + t * d2;
+
+            contacts.push((0.5 * (c1.coords + c2.coords)).into())
+        }
     }
 
     Some(CollisionManifold {
@@ -320,4 +465,52 @@ fn project_to_axis(vertices: &[Point3], axis: &Vector3) -> (f64, f64) {
     }
 
     (min, max)
+}
+
+fn clip_points_to_plane(vertices: &[Point3], normal: Vector3, offset: f64) -> Vec<Point3> {
+    let mut clipped_vertices = vec![];
+    let mut last_vertex = &vertices[vertices.len() - 1];
+    let mut last_distance = last_vertex.coords.dot(&normal) - offset;
+
+    for current_vertex in vertices.iter() {
+        let current_distance = current_vertex.coords.dot(&normal) - offset;
+
+        if last_distance < 0.0 && current_distance < 0.0 {
+            clipped_vertices.push(*current_vertex);
+        } else if last_distance < 0.0 && current_distance > 0.0 {
+            let t = last_distance / (last_distance - current_distance);
+
+            clipped_vertices.push(*last_vertex + t * (current_vertex - last_vertex));
+        } else if current_distance < 0.0 && last_distance > 0.0 {
+            let t = last_distance / (last_distance - current_distance);
+
+            clipped_vertices.push(*last_vertex + t * (current_vertex - last_vertex));
+            clipped_vertices.push(*current_vertex);
+        }
+
+        last_vertex = current_vertex;
+        last_distance = current_distance;
+    }
+
+    clipped_vertices
+}
+
+fn get_support_edge(vertices: &[Point3], normal: Vector3) -> (Point3, Point3) {
+    let mut max_dot = f64::NEG_INFINITY;
+    let mut support_edge = (Point3::origin(), Point3::origin());
+
+    for (a, b) in Collider::CUBOID_EDGE_VERTICES.iter() {
+        let a = &vertices[*a];
+        let b = &vertices[*b];
+
+        let mid_point = 0.5 * (a.coords + b.coords);
+        let dot = mid_point.dot(&normal);
+
+        if dot > max_dot {
+            max_dot = dot;
+            support_edge = (*a, *b);
+        }
+    }
+
+    support_edge
 }

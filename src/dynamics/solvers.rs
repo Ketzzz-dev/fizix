@@ -2,7 +2,7 @@ use crate::aliases::Vector3;
 use crate::collisions::narrow_phase::CollisionManifold;
 use crate::dynamics::RigidBody;
 
-pub const NORM_EPSILON: f64 = 0.0001;
+pub const EPSILON: f64 = 1e-4;
 
 pub const RESTITUTION: f64 = 0.4;
 pub const STATIC_FRICTION: f64 = 0.5;
@@ -63,7 +63,7 @@ pub fn resolve_collision(
 
         let mut contact_tangent = relative_velocity - collision_manifold.normal * contact_velocity;
 
-        if contact_tangent.norm_squared() <= NORM_EPSILON { continue; }
+        if contact_tangent.norm_squared() <= EPSILON { continue; }
 
         contact_tangent.normalize_mut();
 

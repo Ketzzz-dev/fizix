@@ -14,7 +14,27 @@ pub enum Collider {
     }
 }
 
+
 impl Collider {
+    pub const CUBOID_EDGE_VERTICES: [(usize, usize); 12] = [
+        (0, 1), (0, 2), (0, 4),
+        (1, 3), (1, 5), (2, 3),
+        (2, 6), (3, 7), (4, 5),
+        (4, 6), (5, 7), (6, 7),
+    ];
+    pub const CUBOID_FACE_VERTICES: [(usize, usize, usize, usize); 6] = [
+        (0, 1, 3, 2), (0, 2, 6, 4), (0, 4, 5, 1),
+        (7, 3, 1, 5), (7, 5, 4, 6), (7, 6, 2, 3),
+    ];
+    pub const CUBOID_FACE_NORMALS: [Vector3; 6] = [
+        Vector3::new(1.0, 0.0, 0.0),
+        Vector3::new(0.0, 0.0, 1.0),
+        Vector3::new(0.0, 1.0, 0.0),
+        Vector3::new(0.0, 0.0, -1.0),
+        Vector3::new(-1.0, 0.0, 0.0),
+        Vector3::new(0.0, -1.0, 0.0),
+    ];
+
     pub fn inverse_inertia_tensor(&self, mass: f64) -> RotationMatrix {
         match self {
             Collider::Sphere { radius } => {
@@ -55,17 +75,20 @@ impl Collider {
         let y = half_extents.y;
         let z = half_extents.z;
 
-        let vertices = [
-            Point3::new(-x, -y, -z),
-            Point3::new(-x, -y, z),
-            Point3::new(-x, y, -z),
-            Point3::new(-x, y, z),
-            Point3::new(x, -y, -z),
-            Point3::new(x, -y, z),
+        let local_vertices = [
+            Point3::new(x, y, z),
             Point3::new(x, y, -z),
-            Point3::new(x, y, z)
+            Point3::new(x, -y, z),
+            Point3::new(x, -y, -z),
+            Point3::new(-x, y, z),
+            Point3::new(-x, y, -z),
+            Point3::new(-x, -y, z),
+            Point3::new(-x, -y, -z),
         ];
 
-        Collider::Cuboid { half_extents, local_vertices: vertices }
+        Collider::Cuboid {
+            half_extents,
+            local_vertices,
+        }
     }
 }
