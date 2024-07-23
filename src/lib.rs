@@ -1,4 +1,4 @@
-pub mod particle_system;
+pub mod rigid_body_system;
 pub mod constraints;
 
-pub type Scalar = f32;
+pub type Scalar = f64;

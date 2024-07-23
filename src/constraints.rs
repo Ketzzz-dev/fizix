@@ -1,75 +1,148 @@
-use nalgebra::{Point3, Vector3};
-use crate::particle_system::State;
+use nalgebra::{Point3, Quaternion};
+use crate::rigid_body_system::State;
 use crate::Scalar;
 
-// error and gradients
-pub type ConstraintValues = (Scalar, Vec<Vector3<Scalar>>);
-
 pub trait Constraint {
-    fn calculate_values(&self, state: &State) -> ConstraintValues;
-    fn get_particles(&self) -> Vec<usize>;
-}
-
-pub struct FixedConstraint {
-    particle: usize,
-
-    pub position: Point3<Scalar>
-}
-impl FixedConstraint {
-    pub fn new(particle: usize, position: Point3<Scalar>) -> Self {
-        Self { particle, position }
-    }
-}
-
-impl Constraint for FixedConstraint {
-    fn calculate_values(&self, state: &State) -> ConstraintValues {
-        let difference = state.x[self.particle] - self.position;
-        let distance_sq = difference.norm_squared();
-
-        if distance_sq == 0.0 {
-            return (0.0, vec![Vector3::zeros()]);
-        }
-
-        let distance = distance_sq.sqrt();
-
-        (distance, vec![difference / distance])
-    }
-
-    fn get_particles(&self) -> Vec<usize> {
-        vec![self.particle]
-    }
+    fn project_rigid_bodies(&self, state: &mut State);
 }
 
 pub struct DistanceConstraint {
-    particle_a: usize,
-    particle_b: usize,
+    rigid_body_a: usize,
+    rigid_body_b: usize,
 
-    pub distance: Scalar
+    local_point_a: Point3<Scalar>,
+    local_point_b: Point3<Scalar>,
+
+    distance: Scalar
 }
 impl DistanceConstraint {
-    pub fn new(particle_a: usize, particle_b: usize, distance: Scalar) -> Self {
-        Self { particle_a, particle_b, distance }
+    pub fn new(rigid_body_a: usize, rigid_body_b: usize, local_point_a: Point3<Scalar>, local_point_b: Point3<Scalar>, distance: Scalar) -> Self {
+        Self {
+            rigid_body_a,
+            rigid_body_b,
+
+            local_point_a,
+            local_point_b,
+
+            distance
+        }
     }
 }
 
 impl Constraint for DistanceConstraint {
-    fn calculate_values(&self, state: &State) -> ConstraintValues {
-        let position_a = state.x[self.particle_a];
-        let position_b = state.x[self.particle_b];
+    fn project_rigid_bodies(&self, state: &mut State) {
+        let world_point_a = state.transform[self.rigid_body_a] * self.local_point_a;
+        let world_point_b = state.transform[self.rigid_body_b] * self.local_point_b;
 
-        let difference = position_a - position_b;
-        let distance_sq = difference.norm_squared();
+        let delta = world_point_a - world_point_b;
+        let distance = delta.norm();
 
-        if distance_sq == 0.0 {
-            return (-self.distance, vec![Vector3::x(), -Vector3::x()]);
+        let error = distance - self.distance;
+        let normal = delta / distance;
+
+        let relative_point_a = world_point_a - state.position[self.rigid_body_a];
+        let relative_point_b = world_point_b - state.position[self.rigid_body_b];
+
+        let perpendicular_a = relative_point_a.cross(&normal);
+        let perpendicular_b = relative_point_b.cross(&normal);
+
+        let inverse_mass_a = state.inverse_mass[self.rigid_body_a]
+            + perpendicular_a.dot(&(state.inverse_inertia_tensor_world[self.rigid_body_a] * perpendicular_a));
+        let inverse_mass_b = state.inverse_mass[self.rigid_body_b]
+            + perpendicular_b.dot(&(state.inverse_inertia_tensor_world[self.rigid_body_b] * perpendicular_b));
+
+        let lambda = -error / (inverse_mass_a + inverse_mass_b);
+        let positional_correction = normal * lambda;
+
+        if state.has_finite_mass(self.rigid_body_a) {
+            let rotational_correction = relative_point_a.cross(&positional_correction);
+            let orientation = state.orientation[self.rigid_body_a];
+
+            state.position[self.rigid_body_a] += state.inverse_mass[self.rigid_body_a] * positional_correction;
+            state.orientation[self.rigid_body_a] += 0.5
+                * Quaternion::from_imag(state.inverse_inertia_tensor_world[self.rigid_body_a] * rotational_correction)
+                * orientation;
+
+            state.calculate_derived_data(self.rigid_body_a);
         }
+        if state.has_finite_mass(self.rigid_body_b) {
+            let rotational_correction = relative_point_b.cross(&positional_correction);
+            let orientation = state.orientation[self.rigid_body_b];
 
-        let distance = distance_sq.sqrt();
-        let gradient = difference / distance;
+            state.position[self.rigid_body_b] -= state.inverse_mass[self.rigid_body_b] * positional_correction;
+            state.orientation[self.rigid_body_b] -= 0.5
+                * Quaternion::from_imag(state.inverse_inertia_tensor_world[self.rigid_body_b] * rotational_correction)
+                * orientation;
 
-        (distance - self.distance, vec![gradient, -gradient])
+            state.calculate_derived_data(self.rigid_body_b);
+        }
     }
-    fn get_particles(&self) -> Vec<usize> {
-        vec![self.particle_a, self.particle_b]
+}
+
+pub struct SphericalConstraint {
+    rigid_body_a: usize,
+    rigid_body_b: usize,
+
+    local_point_a: Point3<Scalar>,
+    local_point_b: Point3<Scalar>
+}
+impl SphericalConstraint {
+    pub fn new(rigid_body_a: usize, rigid_body_b: usize, local_point_a: Point3<Scalar>, local_point_b: Point3<Scalar>) -> Self {
+        Self {
+            rigid_body_a,
+            rigid_body_b,
+
+            local_point_a,
+            local_point_b
+        }
+    }
+}
+
+impl Constraint for SphericalConstraint {
+    fn project_rigid_bodies(&self, state: &mut State) {
+        let world_point_a = state.transform[self.rigid_body_a] * self.local_point_a;
+        let world_point_b = state.transform[self.rigid_body_b] * self.local_point_b;
+
+        let delta = world_point_a - world_point_b;
+
+        let error = delta.norm();
+        let normal = delta / error;
+
+        let relative_point_a = world_point_a - state.position[self.rigid_body_a];
+        let relative_point_b = world_point_b - state.position[self.rigid_body_b];
+
+        let perpendicular_a = relative_point_a.cross(&normal);
+        let perpendicular_b = relative_point_b.cross(&normal);
+
+        let inverse_mass_a = state.inverse_mass[self.rigid_body_a]
+            + perpendicular_a.dot(&(state.inverse_inertia_tensor_world[self.rigid_body_a] * perpendicular_a));
+        let inverse_mass_b = state.inverse_mass[self.rigid_body_b]
+            + perpendicular_b.dot(&(state.inverse_inertia_tensor_world[self.rigid_body_b] * perpendicular_b));
+
+        let lambda = -error / (inverse_mass_a + inverse_mass_b);
+        let positional_correction = normal * lambda;
+
+        if state.has_finite_mass(self.rigid_body_a) {
+            let rotational_correction = relative_point_a.cross(&positional_correction);
+            let orientation = state.orientation[self.rigid_body_a];
+
+            state.position[self.rigid_body_a] += state.inverse_mass[self.rigid_body_a] * positional_correction;
+            state.orientation[self.rigid_body_a] += 0.5
+                * Quaternion::from_imag(state.inverse_inertia_tensor_world[self.rigid_body_a] * rotational_correction)
+                * orientation;
+
+            state.calculate_derived_data(self.rigid_body_a);
+        }
+        if state.has_finite_mass(self.rigid_body_b) {
+            let rotational_correction = relative_point_b.cross(&positional_correction);
+            let orientation = state.orientation[self.rigid_body_b];
+
+            state.position[self.rigid_body_b] -= state.inverse_mass[self.rigid_body_b] * positional_correction;
+            state.orientation[self.rigid_body_b] -= 0.5
+                * Quaternion::from_imag(state.inverse_inertia_tensor_world[self.rigid_body_b] * rotational_correction)
+                * orientation;
+
+            state.calculate_derived_data(self.rigid_body_b);
+        }
     }
 }
