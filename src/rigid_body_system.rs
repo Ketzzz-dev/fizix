@@ -1,27 +1,27 @@
 use nalgebra::{Isometry3, Matrix3, Point3, Quaternion, UnitQuaternion, Vector3};
 use crate::constraints::Constraint;
-use crate::Scalar;
+use crate::Precision;
 
 #[derive(Clone)]
 pub struct State {
-    pub position: Vec<Point3<Scalar>>,
-    pub orientation: Vec<Quaternion<Scalar>>,
+    pub position: Vec<Point3<Precision>>,
+    pub orientation: Vec<Quaternion<Precision>>,
 
-    pub last_position: Vec<Point3<Scalar>>,
-    pub last_orientation: Vec<Quaternion<Scalar>>,
+    pub last_position: Vec<Point3<Precision>>,
+    pub last_orientation: Vec<Quaternion<Precision>>,
 
-    pub linear_velocity: Vec<Vector3<Scalar>>,
-    pub angular_velocity: Vec<Vector3<Scalar>>,
+    pub linear_velocity: Vec<Vector3<Precision>>,
+    pub angular_velocity: Vec<Vector3<Precision>>,
 
-    pub force: Vec<Vector3<Scalar>>,
-    pub torque: Vec<Vector3<Scalar>>,
+    pub force: Vec<Vector3<Precision>>,
+    pub torque: Vec<Vector3<Precision>>,
 
-    pub inverse_mass: Vec<Scalar>,
+    pub inverse_mass: Vec<Precision>,
 
-    pub inverse_inertia_tensor: Vec<Matrix3<Scalar>>,
-    pub inverse_inertia_tensor_world: Vec<Matrix3<Scalar>>,
+    pub inverse_inertia_tensor: Vec<Matrix3<Precision>>,
+    pub inverse_inertia_tensor_world: Vec<Matrix3<Precision>>,
 
-    pub transform: Vec<Isometry3<Scalar>>
+    pub transform: Vec<Isometry3<Precision>>
 }
 impl State {
     pub fn new() -> Self {
@@ -50,6 +50,14 @@ impl State {
     pub fn has_finite_mass(&self, i: usize) -> bool {
         self.inverse_mass[i] > 0.0
     }
+
+    pub fn rotate_by_vector(&mut self, i: usize, rotation: Vector3<Precision>) {
+        let orientation = self.orientation[i];
+
+        self.orientation[i] += 0.5 * Quaternion::from_imag(rotation) * orientation;
+        self.orientation[i].normalize_mut();
+    }
+
     pub fn calculate_derived_data(&mut self, i: usize) { // always call this after updating position or orientation
         self.transform[i] = Isometry3::from_parts(self.position[i].into(), UnitQuaternion::from_quaternion(self.orientation[i]));
 
@@ -61,18 +69,17 @@ impl State {
 
 pub struct RigidBodySystem {
     pub state: State,
-
     saved_state: Option<State>,
 
     pub constraints: Vec<Box<dyn Constraint>>,
 
-    gravity: Vector3<Scalar>,
+    gravity: Vector3<Precision>,
 
     sub_steps: usize,
     constraint_iterations: usize
 }
 impl RigidBodySystem {
-    pub fn new(gravity: Vector3<Scalar>, sub_steps: usize, constraint_iterations: usize) -> Self {
+    pub fn new(gravity: Vector3<Precision>, sub_steps: usize, constraint_iterations: usize) -> Self {
         Self {
             state: State::new(),
             saved_state: None,
@@ -95,10 +102,14 @@ impl RigidBodySystem {
         }
     }
 
-    pub fn add_rigid_body(&mut self, position: Point3<Scalar>, orientation: Quaternion<Scalar>, mass: Scalar, inertia_tensor: Matrix3<Scalar>) -> usize {
+    pub fn add_rigid_body(&mut self, position: Point3<Precision>, orientation: Quaternion<Precision>, mass: Precision, inertia_tensor: Matrix3<Precision>) -> usize {
         let transform = Isometry3::from_parts(position.into(), UnitQuaternion::from_quaternion(orientation));
         let rotation = transform.rotation.to_rotation_matrix();
-        let inverse_inertia_tensor = inertia_tensor.try_inverse().unwrap_or(Matrix3::zeros());
+        let inverse_inertia_tensor = if mass.is_infinite() {
+            Matrix3::zeros()
+        } else {
+            inertia_tensor.try_inverse().unwrap_or(Matrix3::identity())
+        };
         let inverse_inertia_tensor_world = rotation * inverse_inertia_tensor * rotation.transpose();
 
         self.state.position.push(position);
@@ -128,8 +139,8 @@ impl RigidBodySystem {
         self.constraints.len() - 1
     }
 
-    pub fn update(&mut self, elapsed_time: Scalar) {
-        let delta_time = elapsed_time / self.sub_steps as Scalar;
+    pub fn update(&mut self, elapsed_time: Precision) {
+        let delta_time = elapsed_time / self.sub_steps as Precision;
         let inverse_delta_time = 1.0 / delta_time;
 
         for _ in 0..self.sub_steps {
@@ -142,12 +153,11 @@ impl RigidBodySystem {
 
                 let linear_acceleration = self.gravity + self.state.inverse_mass[i] * self.state.force[i];
                 let angular_acceleration = self.state.inverse_inertia_tensor_world[i] * self.state.torque[i];
+                let orientation = self.state.orientation[i];
 
                 self.state.force[i] = Vector3::zeros();
                 self.state.linear_velocity[i] += linear_acceleration * delta_time;
                 self.state.position[i] += self.state.linear_velocity[i] * delta_time;
-
-                let orientation = self.state.orientation[i];
 
                 self.state.torque[i] = Vector3::zeros();
                 self.state.angular_velocity[i] += angular_acceleration * delta_time;
@@ -161,7 +171,7 @@ impl RigidBodySystem {
             // solve (constraints)
             for _ in 0..self.constraint_iterations {
                 for constraint in self.constraints.iter() {
-                    constraint.project_rigid_bodies(&mut self.state);
+                    constraint.project_bodies(&mut self.state);
                 }
             }
 
@@ -169,10 +179,9 @@ impl RigidBodySystem {
             for i in 0..self.state.position.len() {
                 if !self.state.has_finite_mass(i) { continue; }
 
-                self.state.linear_velocity[i] = (self.state.position[i] - self.state.last_position[i]) * inverse_delta_time;
-
                 let delta_orientation = self.state.orientation[i] * self.state.last_orientation[i].conjugate();
 
+                self.state.linear_velocity[i] = (self.state.position[i] - self.state.last_position[i]) * inverse_delta_time;
                 self.state.angular_velocity[i] = 2.0 * delta_orientation.imag() * inverse_delta_time;
 
                 if delta_orientation.w < 0.0 {

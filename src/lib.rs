@@ -1,4 +1,5 @@
 pub mod rigid_body_system;
 pub mod constraints;
+pub mod util;
 
-pub type Scalar = f64;
+pub type Precision = f64;
