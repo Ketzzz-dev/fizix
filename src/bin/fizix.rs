@@ -9,7 +9,7 @@ use nalgebra::{Matrix3, Point3, Quaternion, Vector3};
 use fizix::constraints::{AxisConstraint, LineConstraint, PointConstraint};
 use fizix::Precision;
 use fizix::rigid_body_system::RigidBodySystem;
-use fizix::util::{cuboid_inertia_tensor};
+use fizix::shapes::{cuboid_inertia_tensor};
 
 const ORANGE: (f32, f32, f32) = (244.0 / 255.0, 115.9 / 255.0, 51.0 / 255.0); // primary color
 const LIGHT_GRAY: (f32, f32, f32) = (108.0 / 255.0, 112.0 / 255.0, 134.0 / 255.0); // secondary color
