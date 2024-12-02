@@ -1,9 +1,10 @@
 use nalgebra::{Matrix3};
 use crate::Precision;
-pub fn cuboid_inertia_tensor(x: Precision, y: Precision, z: Precision, mass: Precision) -> Matrix3<Precision> {
-    let x2 = x * x;
-    let y2 = y * y;
-    let z2 = z * z;
+
+pub fn cuboid_inertia_tensor(width: Precision, height: Precision, length: Precision, mass: Precision) -> Matrix3<Precision> {
+    let x2 = width * width;
+    let y2 = height * height;
+    let z2 = length * length;
 
     let i = mass / 12.0;
 
