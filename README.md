@@ -1,7 +1,5 @@
 # Fizix
 
----
-
 - A simple yet powerful 3D physics engine built from scratch using Position-Based Dynamics (PBD).
 
 - Developed core physics simulation entirely in Rust, focusing on performance and modularity
